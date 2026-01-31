@@ -5,6 +5,7 @@ from typing import Dict, Optional, Tuple
 import MDAnalysis
 import numpy as np
 import numpy.typing as npt
+import nvtx
 
 try:
     import openmm
@@ -249,19 +250,24 @@ class MDSimulationApplication(Application):
         return pdb_file
 
     def run(self, input_data: MDSimulationInput) -> MDSimulationOutput:
-        # Log the input data
-        input_data.dump_yaml(self.workdir / "input.yaml")
+        # 1. EXTRACT UNIQUE ID
+        # sim_dir usually looks like ".../run_uuid_frame000" or similar.
+        # We grab the directory name to tag our traces.
+        sim_id = self.workdir.name 
+        
+        # [PROFILE] Tag: Log_Input_Run123
+        with nvtx.annotate(f"Log_Input_{sim_id}", color="white", domain="DeepDriveMD_Worker"):
+            input_data.dump_yaml(self.workdir / "input.yaml")
 
-        if input_data.sim_frame is None:
-            # No restart point, starting from initial PDB
-            pdb_file = next(input_data.sim_dir.glob("*.pdb"))
-            pdb_file = self.copy_to_workdir(pdb_file)
-            assert pdb_file is not None
-        else:
-            # Collect PDB, DCD, and topology files from previous simulation
-            pdb_file = self.generate_restart_pdb(
-                input_data.sim_dir, input_data.sim_frame
-            )
+        # [PROFILE] Tag: Generate_Restart_PDB_Run123
+        with nvtx.annotate(f"Generate_Restart_PDB_{sim_id}", color="yellow", domain="DeepDriveMD_Worker"):
+            if input_data.sim_frame is None:
+                pdb_file = next(input_data.sim_dir.glob("*.pdb"))
+                pdb_file = self.copy_to_workdir(pdb_file)
+            else:
+                pdb_file = self.generate_restart_pdb(
+                    input_data.sim_dir, input_data.sim_frame
+                )
 
         # Collect an optional topology file
         top_file = self.copy_topology(input_data.sim_dir)
@@ -304,10 +310,11 @@ class MDSimulationApplication(Application):
         )
 
         # Run simulation
-        sim.step(nsteps)
+        with nvtx.annotate(f"OpenMM_Stepping_{sim_id}", color="green", domain="DeepDriveMD_Worker"):
+            sim.step(nsteps)
 
-        # Analyze simulation and collect contact maps and RMSD to native state
-        contact_maps, rmsds = self.analyze_simulation(pdb_file, traj_file)
+        with nvtx.annotate(f"Analyze_Simulation_{sim_id}", color="purple", domain="DeepDriveMD_Worker"):
+            contact_maps, rmsds = self.analyze_simulation(pdb_file, traj_file)
 
         # Save simulation analysis
         np.save(self.workdir / "contact_map.npy", contact_maps)
@@ -330,36 +337,41 @@ class MDSimulationApplication(Application):
     ) -> Tuple["npt.ArrayLike", "npt.ArrayLike"]:
         """Analyze trajectory and return a contact map and
         the RMSD to native state for each frame."""
+        sim_id = self.workdir.name
+        # [PROFILE] Tag: MDA_Load_Run123
+        with nvtx.annotate(f"MDA_Load_{sim_id}", color="magenta", domain="DeepDriveMD_Worker"):
+            mda_u = MDAnalysis.Universe(str(pdb_file), str(traj_file))
+            # Compute contact maps, rmsd, etc in bulk
+            mda_u = MDAnalysis.Universe(str(pdb_file), str(traj_file))
+            ref_u = MDAnalysis.Universe(str(self.config.rmsd_reference_pdb))
+            # Align trajectory to compute accurate RMSD
+            align.AlignTraj(
+                mda_u, ref_u, select=self.config.mda_selection, in_memory=True
+            ).run()
+            # Get atomic coordinates of reference atoms
+            ref_positions = ref_u.select_atoms(self.config.mda_selection).positions.copy()
+            atoms = mda_u.select_atoms(self.config.mda_selection)
+            box = mda_u.atoms.dimensions
+            rows, cols, rmsds = [], [], []
+        with nvtx.annotate(f"CM_RMSD_Loop_{sim_id}", color="orange", domain="DeepDriveMD_Worker"):
+            for _ in mda_u.trajectory:
+                with nvtx.annotate(f"Calc_Frame_{frame_idx}_{sim_id}", domain="DeepDriveMD_Worker"):
+                    positions = atoms.positions
+                    # Compute contact map of current frame (scipy lil_matrix form)
+                    cm = distances.contact_matrix(
+                        positions, self.config.cutoff_angstrom, box=box, returntype="sparse"
+                    )
+                    coo = cm.tocoo()
+                    rows.append(coo.row.astype("int16"))
+                    cols.append(coo.col.astype("int16"))
 
-        # Compute contact maps, rmsd, etc in bulk
-        mda_u = MDAnalysis.Universe(str(pdb_file), str(traj_file))
-        ref_u = MDAnalysis.Universe(str(self.config.rmsd_reference_pdb))
-        # Align trajectory to compute accurate RMSD
-        align.AlignTraj(
-            mda_u, ref_u, select=self.config.mda_selection, in_memory=True
-        ).run()
-        # Get atomic coordinates of reference atoms
-        ref_positions = ref_u.select_atoms(self.config.mda_selection).positions.copy()
-        atoms = mda_u.select_atoms(self.config.mda_selection)
-        box = mda_u.atoms.dimensions
-        rows, cols, rmsds = [], [], []
-        for _ in mda_u.trajectory:
-            positions = atoms.positions
-            # Compute contact map of current frame (scipy lil_matrix form)
-            cm = distances.contact_matrix(
-                positions, self.config.cutoff_angstrom, box=box, returntype="sparse"
+                    # Compute RMSD
+                    rmsd = rms.rmsd(positions, ref_positions, center=True, superposition=True)
+                    rmsds.append(rmsd)
+
+            # Save simulation analysis results
+            contact_maps = np.array(
+                [np.concatenate(row_col) for row_col in zip(rows, cols)], dtype=object
             )
-            coo = cm.tocoo()
-            rows.append(coo.row.astype("int16"))
-            cols.append(coo.col.astype("int16"))
-
-            # Compute RMSD
-            rmsd = rms.rmsd(positions, ref_positions, center=True, superposition=True)
-            rmsds.append(rmsd)
-
-        # Save simulation analysis results
-        contact_maps = np.array(
-            [np.concatenate(row_col) for row_col in zip(rows, cols)], dtype=object
-        )
 
         return contact_maps, rmsds

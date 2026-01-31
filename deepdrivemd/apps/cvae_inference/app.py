@@ -19,63 +19,84 @@ class CVAEInferenceApplication(Application):
     config: CVAEInferenceSettings
 
     def run(self, input_data: CVAEInferenceInput) -> CVAEInferenceOutput:
-        # Log the input data
-        input_data.dump_yaml(self.workdir / "input.yaml")
+        # [PROFILE] Unique ID for this inference task
+        inference_id = self.workdir.name
 
-        # Load data
-        contact_maps = np.concatenate(
-            [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
-        )
-        _rmsds = [np.load(p) for p in input_data.rmsd_paths]
-        rmsds = np.concatenate(_rmsds)
-        lengths = [len(d) for d in _rmsds]  # Number of frames in each simulation
-        sim_frames = np.concatenate([np.arange(i) for i in lengths])
-        sim_dirs = np.concatenate(
-            [[str(p.parent)] * l for p, l in zip(input_data.rmsd_paths, lengths)]
-        )
+        # [PROFILE] Metadata Logging
+        with nvtx.annotate(f"Inf_Log_Input_{inference_id}", color="white", domain="DeepDriveMD_Worker"):
+            input_data.dump_yaml(self.workdir / "input.yaml")
+
+        # [PROFILE] Data Loading (Disk I/O + Memory)
+        # This block reads all the numpy files. High latency here = slow storage.
+        with nvtx.annotate(f"Inf_Data_Load_{inference_id}", color="red", domain="DeepDriveMD_Worker"):
+            
+            # Sub-task: Load Contact Maps (The heavy data)
+            with nvtx.annotate(f"Inf_Load_CMs_{inference_id}", color="red", domain="DeepDriveMD_Worker"):
+                contact_maps = np.concatenate(
+                    [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
+                )
+            
+            # Sub-task: Load RMSDs & Metadata (Metadata overhead)
+            with nvtx.annotate(f"Inf_Load_Metadata_{inference_id}", color="magenta", domain="DeepDriveMD_Worker"):
+                _rmsds = [np.load(p) for p in input_data.rmsd_paths]
+                rmsds = np.concatenate(_rmsds)
+                lengths = [len(d) for d in _rmsds]  # Number of frames in each simulation
+                sim_frames = np.concatenate([np.arange(i) for i in lengths])
+                sim_dirs = np.concatenate(
+                    [[str(p.parent)] * l for p, l in zip(input_data.rmsd_paths, lengths)]
+                )
+        
         assert len(rmsds) == len(sim_frames) == len(sim_dirs)
 
-        # Initialize the model
-        cvae_settings = CVAESettings.from_yaml(self.config.cvae_settings_yaml).dict()
-        trainer = SymmetricConv2dVAETrainer(**cvae_settings)
+        # [PROFILE] Model Setup (CPU)
+        with nvtx.annotate(f"Inf_Init_Model_{inference_id}", color="blue", domain="DeepDriveMD_Worker"):
+            cvae_settings = CVAESettings.from_yaml(self.config.cvae_settings_yaml).dict()
+            trainer = SymmetricConv2dVAETrainer(**cvae_settings)
 
-        # Load model weights to use for inference
-        checkpoint = torch.load(
-            input_data.model_weight_path, map_location=trainer.device
-        )
-        trainer.model.load_state_dict(checkpoint["model_state_dict"])
-
-        # Generate latent embeddings in inference mode
-        embeddings, *_ = trainer.predict(
-            X=contact_maps, inference_batch_size=self.config.inference_batch_size
-        )
-        np.save(self.workdir / "embeddings.npy", embeddings)
-
-        # Perform LocalOutlierFactor outlier detection on embeddings
-        embeddings = np.nan_to_num(embeddings, nan=0.0)
-        clf = LocalOutlierFactor(n_jobs=self.config.sklearn_num_jobs)
-        clf.fit(embeddings)
-
-        # Get best scores and corresponding indices where smaller
-        # RMSDs are closer to folded state and smaller LOF score
-        # is more of an outlier
-        df = (
-            pd.DataFrame(
-                {
-                    "rmsd": rmsds,
-                    "lof": clf.negative_outlier_factor_,
-                    "sim_dirs": sim_dirs,
-                    "sim_frames": sim_frames,
-                }
+            # Checkpoint Loading (Disk Read)
+            checkpoint = torch.load(
+                input_data.model_weight_path, map_location=trainer.device
             )
-            .sort_values("lof")  # First sort by lof score
-            .head(self.config.num_outliers)  # Take the smallest num_outliers lof scores
-            .sort_values("rmsd")  # Finally, sort the smallest lof scores by rmsd
-        )
+            trainer.model.load_state_dict(checkpoint["model_state_dict"])
 
-        df.to_csv(self.workdir / "outliers.csv")
+        # [PROFILE] Inference (GPU Bound)
+        # This is the most critical bar. It represents the AI actually working.
+        with nvtx.annotate(f"Inf_GPU_Predict_{inference_id}", color="green", domain="DeepDriveMD_Worker"):
+            embeddings, *_ = trainer.predict(
+                X=contact_maps, inference_batch_size=self.config.inference_batch_size
+            )
+        
+        # [PROFILE] Save Embeddings (Disk Write)
+        with nvtx.annotate(f"Inf_Save_NPY_{inference_id}", color="yellow", domain="DeepDriveMD_Worker"):
+            np.save(self.workdir / "embeddings.npy", embeddings)
 
-        # Map each of the selections back to the correct simulation file and frame
+        # [PROFILE] Outlier Detection (CPU Bound)
+        # This runs on the CPU (Scikit-Learn). 
+        # While this runs, the GPU is IDLE. If this bar is long, you are wasting GPU resources.
+        with nvtx.annotate(f"Inf_LOF_Compute_{inference_id}", color="purple", domain="DeepDriveMD_Worker"):
+            embeddings = np.nan_to_num(embeddings, nan=0.0)
+            clf = LocalOutlierFactor(n_jobs=self.config.sklearn_num_jobs)
+            clf.fit(embeddings)
+
+        # [PROFILE] Sorting & Filtering (Pandas CPU)
+        with nvtx.annotate(f"Inf_Process_Results_{inference_id}", color="orange", domain="DeepDriveMD_Worker"):
+            # Get best scores and corresponding indices
+            df = (
+                pd.DataFrame(
+                    {
+                        "rmsd": rmsds,
+                        "lof": clf.negative_outlier_factor_,
+                        "sim_dirs": sim_dirs,
+                        "sim_frames": sim_frames,
+                    }
+                )
+                .sort_values("lof")  # First sort by lof score
+                .head(self.config.num_outliers)  # Take the smallest num_outliers
+                .sort_values("rmsd")  # Finally, sort by rmsd
+            )
+
+            df.to_csv(self.workdir / "outliers.csv")
+
         return CVAEInferenceOutput(
             sim_dirs=list(map(Path, df.sim_dirs)), sim_frames=list(df.sim_frames)
         )
