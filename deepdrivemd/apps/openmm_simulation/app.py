@@ -354,7 +354,7 @@ class MDSimulationApplication(Application):
             box = mda_u.atoms.dimensions
             rows, cols, rmsds = [], [], []
         with nvtx.annotate(f"CM_RMSD_Loop_{sim_id}", color="orange", domain="DeepDriveMD_Worker"):
-            for _ in mda_u.trajectory:
+            for frame_idx, _ in enumerate(mda_u.trajectory):
                 with nvtx.annotate(f"Calc_Frame_{frame_idx}_{sim_id}", domain="DeepDriveMD_Worker"):
                     positions = atoms.positions
                     # Compute contact map of current frame (scipy lil_matrix form)
