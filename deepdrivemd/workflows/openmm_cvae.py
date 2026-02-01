@@ -199,7 +199,9 @@ if __name__ == "__main__":
     update_wrapper(my_run_inference, run_inference)
 
     doer = ParslTaskServer(
-        [my_run_simulation, my_run_train, my_run_inference], queues, parsl_config
+        [(my_run_simulation, {'executors': ['simulation']}), 
+         (my_run_train, {'executors': ['learning']}), 
+         (my_run_inference, {'executors': ['learning']})], queues, parsl_config
     )
 
     thinker = DeepDriveMD_OpenMM_CVAE(

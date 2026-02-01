@@ -5,6 +5,7 @@ import pandas as pd
 import torch
 from mdlearn.nn.models.vae.symmetric_conv2d_vae import SymmetricConv2dVAETrainer
 from sklearn.neighbors import LocalOutlierFactor
+import nvtx
 
 from deepdrivemd.api import Application
 from deepdrivemd.apps.cvae_inference import (

@@ -75,12 +75,28 @@ class WorkstationSettings(BaseComputeSettings):
             executors=[
                 HighThroughputExecutor(
                     address="localhost",
-                    label=self.label,
+                    label="learning",
                     cpu_affinity="block",
-                    available_accelerators=self.available_accelerators,
+                    available_accelerators=['3'],
+                    worker_port_range=self.worker_port_range,
+                    provider=LocalProvider(init_blocks=1, max_blocks=1),  # type: ignore[no-untyped-call]
+                ), 
+                HighThroughputExecutor(
+                    address="localhost",
+                    label="simulation",
+                    cpu_affinity="block",
+                    available_accelerators=['0','1','2'],
                     worker_port_range=self.worker_port_range,
                     provider=LocalProvider(init_blocks=1, max_blocks=1),  # type: ignore[no-untyped-call]
                 ),
+                # HighThroughputExecutor(
+                #     address="localhost",
+                #     label=self.label,
+                #     cpu_affinity="block",
+                #     available_accelerators=self.available_accelerators,
+                #     worker_port_range=self.worker_port_range,
+                #     provider=LocalProvider(init_blocks=1, max_blocks=1),  # type: ignore[no-untyped-call]
+                # ),
             ],
         )
 
