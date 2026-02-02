@@ -22,7 +22,7 @@ class CVAETrainApplication(Application):
         with prof("total_training_time"):
 
             # --- 1. SETUP & WEIGHT LOADING (I/O) ---
-            with self.prof("io_weight_loading"):
+            with prof("io_weight_loading"):
                 # Log the input data
                 input_data.dump_yaml(self.workdir / "input.yaml")
 
@@ -38,7 +38,7 @@ class CVAETrainApplication(Application):
 
             # --- 2. INPUT DATA LOADING (I/O) ---
             # This captures the time to read the .npy files from disk
-            with self.prof("io_data_loading"):
+            with prof("io_data_loading"):
                 # Load data
                 contact_maps = np.concatenate(
                     [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
@@ -47,7 +47,7 @@ class CVAETrainApplication(Application):
 
             # --- 3. TRAINING (COMPUTE) ---
             # Crucial: Synchronize before exiting block to capture GPU execution time
-            with self.prof("compute_training"):
+            with prof("compute_training"):
                 # Train model
                 model_dir = self.workdir / "model"  # Need to create new directory
                 trainer.fit(X=contact_maps, scalars={"rmsd": rmsds}, output_path=model_dir)
@@ -56,7 +56,7 @@ class CVAETrainApplication(Application):
 
             # --- 4. OUTPUT SAVING & CLEANUP (I/O) ---
             # This captures writing logs and, critically, the stage-out time (backup_node_local)
-            with self.prof("io_data_saving"):
+            with prof("io_data_saving"):
                 # Log the loss
                 pd.DataFrame(trainer.loss_curve_).to_csv(model_dir / "loss.csv")
 
