@@ -20,6 +20,9 @@ class CVAEInferenceApplication(Application):
     config: CVAEInferenceSettings
 
     def run(self, input_data: CVAEInferenceInput) -> CVAEInferenceOutput:
+        print(">>> STARTING PROFILER CAPTURE <<<")
+        torch.cuda.synchronize()
+        torch.cuda.profiler.start()
         # [PROFILE] Unique ID for this inference task
         inference_id = self.workdir.name
 
@@ -98,6 +101,8 @@ class CVAEInferenceApplication(Application):
 
             df.to_csv(self.workdir / "outliers.csv")
 
+        torch.cuda.profiler.stop()
+        print(">>> STOPPING PROFILER CAPTURE <<<")
         return CVAEInferenceOutput(
             sim_dirs=list(map(Path, df.sim_dirs)), sim_frames=list(df.sim_frames)
         )

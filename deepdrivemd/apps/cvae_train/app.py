@@ -18,6 +18,9 @@ class CVAETrainApplication(Application):
     config: CVAETrainSettings
 
     def run(self, input_data: CVAETrainInput) -> CVAETrainOutput:
+        #print(">>> STARTING PROFILER CAPTURE <<<")
+        #torch.cuda.synchronize()
+        #torch.cuda.profiler.start()
         # [PROFILE] Unique ID: Use the work directory name (usually a UUID)
         # This ensures that if multiple trainings happen, they don't overlap in the visualizer
         train_id = self.workdir.name
@@ -88,4 +91,6 @@ class CVAETrainApplication(Application):
             output_data.dump_yaml(self.workdir / "output.yaml")
             self.backup_node_local()
 
+        #torch.cuda.profiler.stop()                                                                                                                                                     
+        #print(">>> STOPPING PROFILER CAPTURE <<<")         
         return output_data
