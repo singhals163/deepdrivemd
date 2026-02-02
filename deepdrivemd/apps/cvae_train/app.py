@@ -11,49 +11,66 @@ from deepdrivemd.apps.cvae_train import (
     CVAETrainOutput,
     CVAETrainSettings,
 )
+from deepdrivemd.apps import SimpleProfiler
 
 
 class CVAETrainApplication(Application):
     config: CVAETrainSettings
 
     def run(self, input_data: CVAETrainInput) -> CVAETrainOutput:
-        # Log the input data
-        input_data.dump_yaml(self.workdir / "input.yaml")
+        prof = SimpleProfiler(name="training", log_file=self.workdir)
+        with prof("total_training_time"):
 
-        # Initialize the model
-        cvae_settings = CVAESettings.from_yaml(self.config.cvae_settings_yaml).dict()
-        trainer = SymmetricConv2dVAETrainer(**cvae_settings)
+            # --- 1. SETUP & WEIGHT LOADING (I/O) ---
+            with self.prof("io_weight_loading"):
+                # Log the input data
+                input_data.dump_yaml(self.workdir / "input.yaml")
 
-        if self.config.checkpoint_path is not None:
-            checkpoint = torch.load(
-                self.config.checkpoint_path, map_location=trainer.device
-            )
-            trainer.model.load_state_dict(checkpoint["model_state_dict"])
+                # Initialize the model
+                cvae_settings = CVAESettings.from_yaml(self.config.cvae_settings_yaml).dict()
+                trainer = SymmetricConv2dVAETrainer(**cvae_settings)
 
-        # Load data
-        contact_maps = np.concatenate(
-            [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
-        )
-        rmsds = np.concatenate([np.load(p) for p in input_data.rmsd_paths])
+                if self.config.checkpoint_path is not None:
+                    checkpoint = torch.load(
+                        self.config.checkpoint_path, map_location=trainer.device
+                    )
+                    trainer.model.load_state_dict(checkpoint["model_state_dict"])
 
-        # Train model
-        model_dir = self.workdir / "model"  # Need to create new directory
-        trainer.fit(X=contact_maps, scalars={"rmsd": rmsds}, output_path=model_dir)
+            # --- 2. INPUT DATA LOADING (I/O) ---
+            # This captures the time to read the .npy files from disk
+            with self.prof("io_data_loading"):
+                # Load data
+                contact_maps = np.concatenate(
+                    [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
+                )
+                rmsds = np.concatenate([np.load(p) for p in input_data.rmsd_paths])
 
-        # Log the loss
-        pd.DataFrame(trainer.loss_curve_).to_csv(model_dir / "loss.csv")
+            # --- 3. TRAINING (COMPUTE) ---
+            # Crucial: Synchronize before exiting block to capture GPU execution time
+            with self.prof("compute_training"):
+                # Train model
+                model_dir = self.workdir / "model"  # Need to create new directory
+                trainer.fit(X=contact_maps, scalars={"rmsd": rmsds}, output_path=model_dir)
 
-        # Get the most recent model checkpoint
-        checkpoint_dir = model_dir / "checkpoints"
-        model_weight_path = natsorted(list(checkpoint_dir.glob("*.pt")))[-1]
-        # Adjust the path to the persistent path if using node local storage.
-        model_weight_path = (
-            self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
-        )
+                torch.cuda.synchronize()
 
-        output_data = CVAETrainOutput(model_weight_path=model_weight_path)
-        # Log the output data
-        output_data.dump_yaml(self.workdir / "output.yaml")
-        self.backup_node_local()
+            # --- 4. OUTPUT SAVING & CLEANUP (I/O) ---
+            # This captures writing logs and, critically, the stage-out time (backup_node_local)
+            with self.prof("io_data_saving"):
+                # Log the loss
+                pd.DataFrame(trainer.loss_curve_).to_csv(model_dir / "loss.csv")
+
+                # Get the most recent model checkpoint
+                checkpoint_dir = model_dir / "checkpoints"
+                model_weight_path = natsorted(list(checkpoint_dir.glob("*.pt")))[-1]
+                # Adjust the path to the persistent path if using node local storage.
+                model_weight_path = (
+                    self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
+                )
+
+                output_data = CVAETrainOutput(model_weight_path=model_weight_path)
+                # Log the output data
+                output_data.dump_yaml(self.workdir / "output.yaml")
+                self.backup_node_local()
 
         return output_data

@@ -22,6 +22,7 @@ from deepdrivemd.apps.openmm_simulation import (
     MDSimulationOutput,
     MDSimulationSettings,
 )
+from deepdrivemd.apps import SimpleProfiler  
 
 
 def _configure_amber_implicit(
@@ -272,89 +273,104 @@ class MDSimulationApplication(Application):
         return pdb_file
 
     def run(self, input_data: MDSimulationInput) -> MDSimulationOutput:
-        # Log the input data
-        input_data.dump_yaml(self.workdir / "input.yaml")
-        run_minimization = self.config.run_minimization
+        prof = SimpleProfiler(name="simulation", log_file=self.workdir )
+        with prof("total_simulation_time"):
+            
+            # --- 1. INPUT PREPARATION (I/O + CPU) ---
+            with prof("io_input_preparation"):
+                # Log the input data
+                input_data.dump_yaml(self.workdir / "input.yaml")
+                run_minimization = self.config.run_minimization
 
-        if input_data.sim_frame is None:
-            # No restart point, starting from initial PDB
-            pdb_file = next(input_data.sim_dir.glob("*.pdb"))
-            pdb_file = self.copy_to_workdir(pdb_file)
-            run_minimization = True
-            assert pdb_file is not None
-        else:
-            # Collect PDB, DCD, and topology files from previous simulation
-            pdb_file = self.generate_restart_pdb(
-                input_data.sim_dir, input_data.sim_frame
-            )
+                if input_data.sim_frame is None:
+                    # No restart point, starting from initial PDB
+                    pdb_file = next(input_data.sim_dir.glob("*.pdb"))
+                    pdb_file = self.copy_to_workdir(pdb_file)
+                    run_minimization = True
+                    assert pdb_file is not None
+                else:
+                    # Collect PDB, DCD, and topology files from previous simulation
+                    pdb_file = self.generate_restart_pdb(
+                        input_data.sim_dir, input_data.sim_frame
+                    )
 
-        # Collect an optional topology file
-        top_file = self.copy_topology(input_data.sim_dir)
+                # Collect an optional topology file
+                top_file = self.copy_topology(input_data.sim_dir)
 
-        # Initialize an OpenMM simulation
-        sim = configure_simulation(
-            pdb_file=pdb_file,
-            top_file=top_file,
-            solvent_type=self.config.solvent_type,
-            gpu_index=0,
-            dt_ps=self.config.dt_ps,
-            hydrogen_mass=self.config.hydrogen_mass,
-            temperature_kelvin=self.config.temperature_kelvin,
-            heat_bath_friction_coef=self.config.heat_bath_friction_coef,
-            explicit_barostat=self.config.explicit_barostat,
-            run_minimization=run_minimization,
-        )
+            # --- 2. OPENMM CONFIGURATION (CPU overhead) ---
+            with prof("compute_openmm_setup"):
+                # Initialize an OpenMM simulation
+                sim = configure_simulation(
+                    pdb_file=pdb_file,
+                    top_file=top_file,
+                    solvent_type=self.config.solvent_type,
+                    gpu_index=0,
+                    dt_ps=self.config.dt_ps,
+                    hydrogen_mass=self.config.hydrogen_mass,
+                    temperature_kelvin=self.config.temperature_kelvin,
+                    heat_bath_friction_coef=self.config.heat_bath_friction_coef,
+                    explicit_barostat=self.config.explicit_barostat,
+                    run_minimization=run_minimization,
+                )
 
-        # openmm typed variables
-        dt_ps = self.config.dt_ps * u.picoseconds
-        report_interval_ps = self.config.report_interval_ps * u.picoseconds
-        simulation_length_ns = self.config.simulation_length_ns * u.nanoseconds
+                # openmm typed variables
+                dt_ps = self.config.dt_ps * u.picoseconds
+                report_interval_ps = self.config.report_interval_ps * u.picoseconds
+                simulation_length_ns = self.config.simulation_length_ns * u.nanoseconds
 
-        # Steps between reporting DCD frames and logs
-        report_steps = int(report_interval_ps / dt_ps)
-        # Number of steps to run each simulation
-        nsteps = int(simulation_length_ns / dt_ps)
+                # Steps between reporting DCD frames and logs
+                report_steps = int(report_interval_ps / dt_ps)
+                # Number of steps to run each simulation
+                nsteps = int(simulation_length_ns / dt_ps)
 
-        # Set up reporters to write simulation trajectory file and logs
-        if int(openmm.__version__[0]) > 7:
-            traj_file = str(self.workdir / "sim.xtc")
-            sim.reporters.append(app.XTCReporter(traj_file, report_steps))
-        else:
-            traj_file = str(self.workdir / "sim.dcd")
-            sim.reporters.append(app.DCDReporter(traj_file, report_steps))
+                # Set up reporters to write simulation trajectory file and logs
+                if int(openmm.__version__[0]) > 7:
+                    traj_file = str(self.workdir / "sim.xtc")
+                    sim.reporters.append(app.XTCReporter(traj_file, report_steps))
+                else:
+                    traj_file = str(self.workdir / "sim.dcd")
+                    sim.reporters.append(app.DCDReporter(traj_file, report_steps))
 
-        sim.reporters.append(
-            app.StateDataReporter(
-                str(self.workdir / "sim.log"),
-                report_steps,
-                step=True,
-                time=True,
-                speed=True,
-                potentialEnergy=True,
-                temperature=True,
-                totalEnergy=True,
-            )
-        )
+                sim.reporters.append(
+                    app.StateDataReporter(
+                        str(self.workdir / "sim.log"),
+                        report_steps,
+                        step=True,
+                        time=True,
+                        speed=True,
+                        potentialEnergy=True,
+                        temperature=True,
+                        totalEnergy=True,
+                    )
+                )
 
-        # Run simulation
-        sim.step(nsteps)
+            # --- 3. SIMULATION RUN (COMPUTE - GPU) ---
+            with prof("compute_openmm_run"):
+                # Run simulation
+                # Note: OpenMM's step() is generally blocking in Python, so explicit
+                # cuda synchronization is rarely needed here unless checking nanoseconds precision.
+                sim.step(nsteps)
 
-        # Analyze simulation and collect contact maps and RMSD to native state
-        contact_maps, rmsds = self.analyze_simulation(pdb_file, traj_file)
+            # --- 4. POST-PROCESSING ANALYSIS (COMPUTE - CPU) ---
+            with prof("compute_analysis_cpu"):
+                # Analyze simulation and collect contact maps and RMSD to native state
+                contact_maps, rmsds = self.analyze_simulation(pdb_file, traj_file)
 
-        # Save simulation analysis
-        np.save(self.workdir / "contact_map.npy", contact_maps)
-        np.save(self.workdir / "rmsd.npy", rmsds)
+            # --- 5. OUTPUT SAVING (I/O) ---
+            with prof("io_output_saving"):
+                # Save simulation analysis
+                np.save(self.workdir / "contact_map.npy", contact_maps)
+                np.save(self.workdir / "rmsd.npy", rmsds)
 
-        # Return simulation analysis outputs
-        output_data = MDSimulationOutput(
-            contact_map_path=self.persistent_dir / "contact_map.npy",
-            rmsd_path=self.persistent_dir / "rmsd.npy",
-        )
+                # Return simulation analysis outputs
+                output_data = MDSimulationOutput(
+                    contact_map_path=self.persistent_dir / "contact_map.npy",
+                    rmsd_path=self.persistent_dir / "rmsd.npy",
+                )
 
-        # Log the output data
-        output_data.dump_yaml(self.workdir / "output.yaml")
-        self.backup_node_local()
+                # Log the output data
+                output_data.dump_yaml(self.workdir / "output.yaml")
+                self.backup_node_local()
 
         return output_data
 
