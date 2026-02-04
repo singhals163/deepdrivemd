@@ -60,7 +60,7 @@ compute_settings:
 # see deepdrivemd/apps/openmm_simulation/__init__.py:MDSimulationSettings
 simulation_settings:
   # The number of nanoseconds to run each simulation for
-  simulation_length_ns: 10
+  simulation_length_ns: 0.5
   # How often to write a coordinate frame to a DCD file
   report_interval_ps: 10
   # The temperature to simulate at
