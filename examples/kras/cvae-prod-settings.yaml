@@ -1,0 +1,32 @@
+# CVAE Model Hyperparameters for KRAS (169 Residues)
+
+# 1. INPUT SHAPE
+# Format: [Channels, Height, Width]
+# - Channels: Always 1 for a standard contact map.
+# - Height/Width: The number of residues in your system.
+# KRAS 4OBE has residues 1-169, so this must be 169.
+input_shape: [1, 169, 169]
+
+# 2. CONVOLUTIONAL ARCHITECTURE
+# We increase the number of filters (vs BBA) because KRAS has more complex 
+# features (alpha helices, beta sheets, switch regions) to detect.
+# - Filters: Number of feature maps to learn at each layer.
+# - Kernels: Size of the sliding window (3x3 is standard).
+# - Strides: How the window moves (2 means downsample by half).
+filters: [32, 32, 32, 32]
+kernels: [3, 3, 3, 3]
+strides: [1, 2, 2, 1]
+
+# 3. LATENT SPACE (The "Compressed" Representation)
+# This is the most important scientific parameter.
+# It forces the AI to compress the motion into N dimensions.
+# - BBA used 3.
+# - KRAS is complex, so we use 10-12 to capture the subtle switch mechanisms.
+latent_dim: 12
+
+# 4. TRAINING SETTINGS
+# H100s are fast, so we can afford a standard batch size and epoch count.
+batch_size: 32
+epochs: 100
+optimizer: 'rmsprop'
+loss: 'binary_crossentropy'  # Standard for contact maps (0 or 1)
