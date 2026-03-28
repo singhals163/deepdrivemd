@@ -5,8 +5,9 @@ import shutil
 import sys
 import time
 import uuid
+import queue
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Semaphore
@@ -192,7 +193,39 @@ class InferenceCountDoneCallback(DoneCallback):
         return workflow.task_counter["inference"] >= self.total_inferences
 
 
-class DeepDriveMDWorkflow(BaseThinker):  # type: ignore[misc]
+# =============================================================================
+# SIGNAL MONITOR (Decoupled Policy Engine)
+# =============================================================================
+class SignalMonitor:
+    def __init__(self, window_size: int = 5):
+        self.telemetry_window = deque(maxlen=window_size)
+        self.sim_data_window = deque(maxlen=window_size)
+        self.current_state = 0  # Starts Terminated, moves to Active on first run
+
+    def update_train_telemetry(self, telemetry: Dict[str, Any]) -> None:
+        self.telemetry_window.append(telemetry)
+
+    def update_sim_telemetry(self, sim_data: Any) -> None:
+        self.sim_data_window.append(sim_data)
+
+    def evaluate_state(self) -> int:
+        if len(self.telemetry_window) < 3:
+            return 2 # Remain Active early on
+
+        latest = self.telemetry_window[-1]
+        prev = self.telemetry_window[-2]
+
+        # 1. Validation Loss Improvement Threshold
+        if "valid_loss" in latest and "valid_loss" in prev:
+            if prev["valid_loss"] > 0:
+                improvement = (prev["valid_loss"] - latest["valid_loss"]) / prev["valid_loss"]
+                if improvement < 0.01:
+                    return 1 # Target Dormant State
+                    
+        return 2 # Remain Active
+
+
+class DeepDriveMDWorkflow(BaseThinker):
     def __init__(
         self,
         queue: ColmenaQueues,
