@@ -9,7 +9,7 @@ from typing import Any
 from colmena.queue.python import PipeQueues
 from colmena.task_server import ParslTaskServer
 from proxystore.store import register_store
-from proxystore.store.file import FileStore
+from proxystore.store.redis import RedisStore
 
 from deepdrivemd.api import ( 
     DeepDriveMDSettings,
@@ -175,14 +175,18 @@ if __name__ == "__main__":
     cfg.dump_yaml(cfg.run_dir / "params.yaml")
     cfg.configure_logging()
 
-    store = FileStore(name="file", store_dir=str(cfg.run_dir / "proxy-store"))
+    store = RedisStore(
+        name="redis", 
+        hostname=cfg.redishost, 
+        port=cfg.redisport
+    )
     register_store(store)
 
-    # Added "admin" topic for state 2 -> 1 serialization tasks
+    # Changed: Update the proxystore_name to match the newly registered RedisStore
     queues = PipeQueues(
         serialization_method="pickle",
         topics=["simulation", "train", "inference", "admin"],
-        proxystore_name="file",
+        proxystore_name="redis",
         proxystore_threshold=10000,
     )
 
