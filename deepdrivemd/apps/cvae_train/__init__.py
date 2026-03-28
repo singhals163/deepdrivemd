@@ -16,7 +16,7 @@ class CVAETrainInput(BatchSettings):
 
 class CVAETrainOutput(BaseSettings):
     model_weight_path: Path
-
+    telemetry: Dict[str, Any] = {}  # Added to transmit V_t back to the Signal Monitor
 
 class CVAESettings(BaseSettings):
     """Settings for mdlearn SymmetricConv2dVAETrainer object."""
