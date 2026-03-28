@@ -76,8 +76,7 @@ def run_admin(model_ref: str, config: CVAETrainSettings) -> Any:
     """Executes the State 2 -> State 1 transition (Sleep and Serialize)."""
     from deepdrivemd.apps.cvae_train.app import CVAETrainApplication
     app = CVAETrainApplication(config)
-    output_data = app.run(input_data)
-    return output_data
+    return app.transition_to_dormant(model_ref)
 
 
 def run_inference(
