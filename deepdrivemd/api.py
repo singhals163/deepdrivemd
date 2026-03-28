@@ -252,8 +252,14 @@ class DeepDriveMDWorkflow(BaseThinker):
         self.run_training = Event()
         self.run_inference = Event()
 
+        # --- Dynamic Resource & Telemetry State ---
+        self.signal_monitor = SignalMonitor(window_size=5)
+        self.telemetry_queue = queue.Queue()
+        self.ai_state = 0 # 0=Terminated, 1=Dormant, 2=Active
+        self.active_model_ref = None
+        self.dormant_model_proxy = None
+
     def log_result(self, result: Result, topic: str) -> None:
-        """Write a JSON result per line of the output file."""
         with open(self.result_dir / f"{topic}.json", "a") as f:
             print(result.json(exclude={"inputs", "value"}), file=f)
 
@@ -278,7 +284,49 @@ class DeepDriveMDWorkflow(BaseThinker):
         for _ in range(self.num_workers - 1):
             self.simulate()
 
-    @result_processor(topic="simulation")  # type: ignore[misc]
+    # =========================================================================
+    # OFF-CRITICAL PATH: Signal Monitor Agent
+    # =========================================================================
+    @agent
+    def run_signal_monitor_loop(self) -> None:
+        while not self.done.is_set():
+            try:
+                source, data = self.telemetry_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            if source == "train":
+                self.signal_monitor.update_train_telemetry(data)
+            elif source == "simulation":
+                self.signal_monitor.update_sim_telemetry(data)
+            
+            target_state = self.signal_monitor.evaluate_state()
+
+            if target_state != self.ai_state:
+                self.execute_state_transition(target_state)
+
+    def execute_state_transition(self, target_state: int) -> None:
+        self.logger.info(f"Signal Monitor transitioning AI State: {self.ai_state} -> {target_state}")
+        
+        if target_state == 1 and self.ai_state == 2:
+            # 1. Trigger sleep execution on the worker
+            self.submit_task("admin", self.active_model_ref)
+            self.ai_state = 1
+            # 2. Add Parsl Executor redistribution logic here (Dynamic Resource Broker)
+            
+        elif target_state == 2 and self.ai_state == 1:
+            self.ai_state = 2
+            # Wakeup is handled dynamically in the run_train wrapper next time train() is called
+            # 1. Add Parsl Executor redistribution logic here (Dynamic Resource Broker)
+            
+        elif target_state == 0:
+            self.ai_state = 0
+            self.dormant_model_proxy = None
+
+    # =========================================================================
+    # CRITICAL PATH: Task Processors
+    # =========================================================================
+    @result_processor(topic="simulation")
     def process_simulation_result(self, result: Result) -> None:
         self.log_result(result, "simulation")
         if not result.success:
@@ -307,12 +355,27 @@ class DeepDriveMDWorkflow(BaseThinker):
         if not result.success:
             return self.logger.warning("Bad train result")
 
-        # Process the training output
-        self.handle_train_output(result.value)
-        self.logger.info("Training process is complete")
+        # 1. Extract telemetry and proxy references
+        out_value = result.value
+        if hasattr(out_value, "telemetry"):
+            self.telemetry_queue.put(("train", out_value.telemetry))
+            
+        if hasattr(out_value, "model_ref"):
+            self.active_model_ref = out_value.model_ref
 
-    # TODO (wardlt): We can have this event_responder allocate resources away from simulation if desired.
-    @event_responder(event_name="run_inference")  # type: ignore[misc]
+        self.handle_train_output(out_value)
+        self.logger.info("Training process is complete")
+        
+    @result_processor(topic="admin")
+    def process_admin_result(self, result: Result) -> None:
+        """Handles the return of the serialized model from a Sleep command."""
+        if result.success:
+            self.logger.info("Successfully serialized model to dormant state.")
+            self.dormant_model_proxy = result.value
+        else:
+            self.logger.warning("Failed to serialize model state.")
+
+    @event_responder(event_name="run_inference")
     def perform_inference(self) -> None:
         self.logger.info("Started inference process")
         self.inference()

@@ -40,13 +40,41 @@ def run_simulation(
 ) -> MDSimulationOutput:
     from deepdrivemd.apps.openmm_simulation.app import MDSimulationApplication
     app = MDSimulationApplication(config)
-    output_data = app.run(input_data)
-    return output_data
+    return app.run(input_data)
 
-
-def run_train(input_data: CVAETrainInput, config: CVAETrainSettings) -> CVAETrainOutput:
+# =============================================================================
+# STATEFUL TRAINING WRAPPERS
+# =============================================================================
+def run_train(
+    ai_state: int, model_ref: Any, input_data: CVAETrainInput, config: CVAETrainSettings
+) -> CVAETrainOutput:
+    """Wrapper that resolves the state of the AI model before training."""
     from deepdrivemd.apps.cvae_train.app import CVAETrainApplication
+    app = CVAETrainApplication(config)
+    
+    if ai_state == 0:
+        # Cold Start: Init model -> Store in GPU Cache -> Train
+        new_ref = app.startup()
+        output_data = app.run_active(new_ref, input_data)
+        output_data.model_ref = new_ref  # Piggyback reference back to Thinker
+        return output_data
+        
+    elif ai_state == 1:
+        # Wakeup: Deserialize Proxy -> Load to GPU Cache -> Train
+        new_ref = app.wakeup(model_ref) 
+        output_data = app.run_active(new_ref, input_data)
+        output_data.model_ref = new_ref
+        return output_data
+        
+    else:
+        # Active: Train directly against cached GPU memory
+        output_data = app.run_active(model_ref, input_data)
+        output_data.model_ref = model_ref
+        return output_data
 
+def run_admin(model_ref: str, config: CVAETrainSettings) -> Any:
+    """Executes the State 2 -> State 1 transition (Sleep and Serialize)."""
+    from deepdrivemd.apps.cvae_train.app import CVAETrainApplication
     app = CVAETrainApplication(config)
     output_data = app.run(input_data)
     return output_data
@@ -56,7 +84,6 @@ def run_inference(
     input_data: CVAEInferenceInput, config: CVAEInferenceSettings
 ) -> CVAEInferenceOutput:
     from deepdrivemd.apps.cvae_inference.app import CVAEInferenceApplication
-
     app = CVAEInferenceApplication(config)
     output_data = app.run(input_data)
     return output_data
@@ -86,8 +113,13 @@ class DeepDriveMD_OpenMM_CVAE(DeepDriveMDWorkflow):
         self.submit_task("simulation", inputs)
 
     def train(self) -> None:
-        self.submit_task("train", self.train_input)
-        # self.train_input.clear()  # Clear batched data
+        """Dispatches the training task with the current state and corresponding reference."""
+        model_ref = self.dormant_model_proxy if self.ai_state == 1 else self.active_model_ref
+        
+        # Topic "train" routes to run_train
+        self.submit_task("train", self.ai_state, model_ref, self.train_input)
+        
+        # Optional: self.train_input.clear() if you implement incremental training
 
     def inference(self) -> None:
         while not self.model_weights_available:
@@ -137,9 +169,7 @@ class ExperimentSettings(DeepDriveMDSettings):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("-c", "--config", required=True)
-    parser.add_argument(
-        "-t", "--test", action="store_true", help="Test Mock Application"
-    )
+    parser.add_argument("-t", "--test", action="store_true", help="Test Mock Application")
     args = parser.parse_args()
     
     cfg = ExperimentSettings.from_yaml(args.config)
@@ -149,10 +179,10 @@ if __name__ == "__main__":
     store = FileStore(name="file", store_dir=str(cfg.run_dir / "proxy-store"))
     register_store(store)
 
-    # Make the queues
+    # Added "admin" topic for state 2 -> 1 serialization tasks
     queues = PipeQueues(
         serialization_method="pickle",
-        topics=["simulation", "train", "inference"],
+        topics=["simulation", "train", "inference", "admin"],
         proxystore_name="file",
         proxystore_threshold=10000,
     )
@@ -161,13 +191,18 @@ if __name__ == "__main__":
 
     my_run_simulation = partial(run_simulation, config=cfg.simulation_settings)
     my_run_train = partial(run_train, config=cfg.train_settings)
+    my_run_admin = partial(run_admin, config=cfg.train_settings)
     my_run_inference = partial(run_inference, config=cfg.inference_settings)
+    
     update_wrapper(my_run_simulation, run_simulation)
     update_wrapper(my_run_train, run_train)
+    update_wrapper(my_run_admin, run_admin)
     update_wrapper(my_run_inference, run_inference)
 
+    parsl_executors = {exec.label: exec for exec in parsl_config.executors}
+
     doer = ParslTaskServer(
-        [my_run_simulation, my_run_train, my_run_inference], queues, parsl_config
+        [my_run_simulation, my_run_train, my_run_inference, my_run_admin], queues, parsl_config
     )
 
     thinker = DeepDriveMD_OpenMM_CVAE(
