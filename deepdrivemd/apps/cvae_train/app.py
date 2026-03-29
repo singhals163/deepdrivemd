@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 import gc
+from pathlib import Path
 from typing import Any, Dict
 from mdlearn.nn.models.vae.symmetric_conv2d_vae import SymmetricConv2dVAETrainer
 from natsort import natsorted
@@ -22,7 +23,7 @@ _GPU_MODEL_CACHE: Dict[str, SymmetricConv2dVAETrainer] = {}
 
 
 class CVAETrainApplication(Application):
-    """Refactored Application to handle stateful execution steps."""
+    """Refactored Application to handle stateful execution steps without I/O bloat."""
     config: CVAETrainSettings
 
     def _init_trainer(self) -> SymmetricConv2dVAETrainer:
@@ -37,7 +38,6 @@ class CVAETrainApplication(Application):
         if self.config.checkpoint_path is not None:
             checkpoint = torch.load(self.config.checkpoint_path, map_location=trainer.device)
             trainer.model.load_state_dict(checkpoint["model_state_dict"])
-            # Load optimizer state if necessary to maintain momentum across cycles
             if "optimizer_state_dict" in checkpoint and trainer.optimizer:
                 trainer.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
@@ -52,25 +52,17 @@ class CVAETrainApplication(Application):
 
         trainer = _GPU_MODEL_CACHE[model_ref]
 
-        input_data.dump_yaml(self.workdir / "input.yaml")
-
-        # Load data. 
-        # *CRITICAL*: To eliminate the AI Tax compounding cost, ensure 'input_data' 
-        # only contains newly generated simulation paths since the last cycle, 
-        # not the full historical dataset.
+        # Load data directly into memory
         contact_maps = np.concatenate([np.load(p, allow_pickle=True) for p in input_data.contact_map_paths])
         rmsds = np.concatenate([np.load(p) for p in input_data.rmsd_paths])
 
-        # Train model (warm started automatically because trainer is cached)
+        # Train model
         model_dir = self.workdir / "model"
+        # Note: trainer.fit may still write its internal epoch checkpoints depending on config
         trainer.fit(X=contact_maps, scalars={"rmsd": rmsds}, output_path=model_dir)
 
-        # Log the loss
+        # Extract telemetry directly from memory
         loss_df = pd.DataFrame(trainer.loss_curve_)
-        loss_df.to_csv(model_dir / "loss.csv")
-
-        # --- Extract Telemetry for Signal Monitor ---
-        # Get the final training and validation loss of this specific cycle
         final_train_loss = float(loss_df["train_loss"].iloc[-1]) if "train_loss" in loss_df else 0.0
         final_valid_loss = float(loss_df["valid_loss"].iloc[-1]) if "valid_loss" in loss_df else 0.0
         
@@ -79,17 +71,18 @@ class CVAETrainApplication(Application):
             "training_loss": final_train_loss,
         }
 
-        # Save and locate checkpoint
+        # Locate the checkpoint for inference tasks
         checkpoint_dir = model_dir / "checkpoints"
         model_weight_path = natsorted(list(checkpoint_dir.glob("*.pt")))[-1]
-        model_weight_path = self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
+        
+        # If backup_node_local() is bypassed to save I/O time, inference MUST 
+        # read from the original workdir, not the persistent_dir.
+        # model_weight_path = self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
 
         output_data = CVAETrainOutput(
             model_weight_path=model_weight_path, 
             telemetry=telemetry
         )
-        output_data.dump_yaml(self.workdir / "output.yaml")
-        self.backup_node_local()
 
         return output_data
 
@@ -99,13 +92,11 @@ class CVAETrainApplication(Application):
         if not trainer:
             raise RuntimeError("Cannot transition to dormant; model not active.")
         
-        # Extract PyTorch state dictionaries
         state = {
             "model_state_dict": trainer.model.state_dict(),
             "optimizer_state_dict": trainer.optimizer.state_dict() if trainer.optimizer else None
         }
 
-        # Explicitly destroy the trainer and clear the 11.9 GB residual footprint
         del trainer
         gc.collect()
         torch.cuda.empty_cache()
@@ -123,3 +114,59 @@ class CVAETrainApplication(Application):
         model_ref = "active_cvae_trainer"
         _GPU_MODEL_CACHE[model_ref] = trainer
         return model_ref
+
+    def transition_to_terminated(self, model_ref: str) -> Path:
+        """State 2 -> 0: Extract final state, dump to persistent storage, clear GPU."""
+        trainer = _GPU_MODEL_CACHE.pop(model_ref, None)
+        if not trainer:
+            raise RuntimeError("Cannot terminate; model not active.")
+
+        # Define the final checkpoint dump path
+        final_checkpoint_path = self.persistent_dir / "final_model_checkpoint.pt"
+        final_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Execute the single I/O operation to save the permanent model
+        torch.save({
+            "model_state_dict": trainer.model.state_dict(),
+            "optimizer_state_dict": trainer.optimizer.state_dict() if trainer.optimizer else None
+        }, final_checkpoint_path)
+
+        # Wipe the GPU
+        del trainer
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        return final_checkpoint_path
+
+    def terminate_from_dormant(self, state_dict_proxy: Dict[str, Any]) -> Path:
+        """State 1 -> 0: Read from ProxyStore, dump to disk, return path."""
+        final_checkpoint_path = self.persistent_dir / "final_model_checkpoint.pt"
+        final_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # ProxyStore automatically resolves the proxy into the actual dictionary
+        # the moment torch.save tries to access it.
+        torch.save(state_dict_proxy, final_checkpoint_path)
+
+        return final_checkpoint_path
+
+    def init_to_dormant(self) -> Dict[str, Any]:
+        """State 0 -> 1: Initialize model, immediately extract state, return for proxying."""
+        trainer = self._init_trainer()
+
+        if self.config.checkpoint_path is not None:
+            checkpoint = torch.load(self.config.checkpoint_path, map_location=trainer.device)
+            trainer.model.load_state_dict(checkpoint["model_state_dict"])
+            if "optimizer_state_dict" in checkpoint and trainer.optimizer:
+                trainer.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        state = {
+            "model_state_dict": trainer.model.state_dict(),
+            "optimizer_state_dict": trainer.optimizer.state_dict() if trainer.optimizer else None
+        }
+
+        # Aggressively clear the GPU before the worker returns
+        del trainer
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        return state

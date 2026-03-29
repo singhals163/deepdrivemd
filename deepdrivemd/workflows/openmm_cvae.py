@@ -71,6 +71,24 @@ def run_train(
         output_data = app.run_active(model_ref, input_data)
         output_data.model_ref = model_ref
         return output_data
+    
+def run_terminate(ai_state: int, ref: Any, config: CVAETrainSettings) -> Path:
+    """Executes termination based on the previous state."""
+    from deepdrivemd.apps.cvae_train.app import CVAETrainApplication
+    app = CVAETrainApplication(config)
+    
+    if ai_state == 2:
+        return app.transition_to_terminated(ref)
+    elif ai_state == 1:
+        return app.terminate_from_dormant(ref)
+    else:
+        raise ValueError("Cannot terminate a model that is already in State 0.")
+
+def run_init_dormant(config: CVAETrainSettings) -> Any:
+    """Executes the State 0 -> State 1 transition."""
+    from deepdrivemd.apps.cvae_train.app import CVAETrainApplication
+    app = CVAETrainApplication(config)
+    return app.init_to_dormant()
 
 def run_admin(model_ref: str, config: CVAETrainSettings) -> Any:
     """Executes the State 2 -> State 1 transition (Sleep and Serialize)."""
@@ -182,10 +200,9 @@ if __name__ == "__main__":
     )
     register_store(store)
 
-    # Changed: Update the proxystore_name to match the newly registered RedisStore
     queues = PipeQueues(
         serialization_method="pickle",
-        topics=["simulation", "train", "inference", "admin"],
+        topics=["simulation", "train", "inference", "admin", "terminate", "init_dormant"],
         proxystore_name="redis",
         proxystore_threshold=10000,
     )
@@ -196,16 +213,22 @@ if __name__ == "__main__":
     my_run_train = partial(run_train, config=cfg.train_settings)
     my_run_admin = partial(run_admin, config=cfg.train_settings)
     my_run_inference = partial(run_inference, config=cfg.inference_settings)
+    my_run_terminate = partial(run_terminate, config=cfg.train_settings) 
+    my_run_init_dormant = partial(run_init_dormant, config=cfg.train_settings)
     
     update_wrapper(my_run_simulation, run_simulation)
     update_wrapper(my_run_train, run_train)
     update_wrapper(my_run_admin, run_admin)
     update_wrapper(my_run_inference, run_inference)
+    update_wrapper(my_run_terminate, run_terminate) 
+    update_wrapper(my_run_init_dormant, run_init_dormant)
 
     parsl_executors = {exec.label: exec for exec in parsl_config.executors}
 
     doer = ParslTaskServer(
-        [my_run_simulation, my_run_train, my_run_inference, my_run_admin], queues, parsl_config
+        [my_run_simulation, my_run_train, my_run_inference, my_run_admin, my_run_terminate, my_run_init_dormant], 
+        queues, 
+        parsl_config
     )
 
     thinker = DeepDriveMD_OpenMM_CVAE(

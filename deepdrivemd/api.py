@@ -309,23 +309,51 @@ class DeepDriveMDWorkflow(BaseThinker):
         self.logger.info(f"Signal Monitor transitioning AI State: {self.ai_state} -> {target_state}")
         
         if target_state == 1 and self.ai_state == 2:
-            # 1. Trigger sleep execution on the worker
             self.submit_task("admin", self.active_model_ref)
             self.ai_state = 1
-            # 2. Add Parsl Executor redistribution logic here (Dynamic Resource Broker)
             
         elif target_state == 2 and self.ai_state == 1:
             self.ai_state = 2
-            # Wakeup is handled dynamically in the run_train wrapper next time train() is called
-            # 1. Add Parsl Executor redistribution logic here (Dynamic Resource Broker)
             
-        elif target_state == 0:
+        elif target_state == 1 and self.ai_state == 0:
+            # 0 -> 1: Initialize to Dormant
+            self.submit_task("init_dormant")
+            self.ai_state = 1
+
+        elif target_state == 0 and self.ai_state == 2:
+            # 2 -> 0: Terminate from Active (Pass the state and reference)
+            self.submit_task("terminate", self.ai_state, self.active_model_ref)
             self.ai_state = 0
+            self.active_model_ref = None
+            self.dormant_model_proxy = None
+
+        elif target_state == 0 and self.ai_state == 1:
+            # 1 -> 0: Terminate from Dormant (Pass the state and proxy reference)
+            self.submit_task("terminate", self.ai_state, self.dormant_model_proxy)
+            self.ai_state = 0
+            self.active_model_ref = None
             self.dormant_model_proxy = None
 
     # =========================================================================
     # CRITICAL PATH: Task Processors
     # =========================================================================
+    @result_processor(topic="terminate")
+    def process_terminate_result(self, result: Result) -> None:
+        """Handles the final output of the 2 -> 0 transition."""
+        if result.success:
+            self.logger.info(f"AI Service successfully terminated. Final model saved to: {result.value}")
+        else:
+            self.logger.warning("Failed to save final model during termination.")
+    
+    @result_processor(topic="init_dormant")
+    def process_init_dormant_result(self, result: Result) -> None:
+        """Handles the return of the serialized model from a 0 -> 1 initialization."""
+        if result.success:
+            self.logger.info("Successfully initialized model directly to dormant state in Redis.")
+            self.dormant_model_proxy = result.value
+        else:
+            self.logger.warning("Failed to initialize model to dormant state.")
+
     @result_processor(topic="simulation")
     def process_simulation_result(self, result: Result) -> None:
         self.log_result(result, "simulation")
