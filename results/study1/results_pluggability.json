@@ -1,0 +1,47 @@
+[
+  {
+    "profile": "fast_converge",
+    "n_cycles": 50,
+    "policy_a": {
+      "name": "threshold",
+      "freeze_step": 20,
+      "transitions": 1
+    },
+    "policy_b": {
+      "name": "sliding_window",
+      "freeze_step": 31,
+      "transitions": 5
+    },
+    "different_decisions": true
+  },
+  {
+    "profile": "slow_converge",
+    "n_cycles": 50,
+    "policy_a": {
+      "name": "threshold",
+      "freeze_step": null,
+      "transitions": 0
+    },
+    "policy_b": {
+      "name": "sliding_window",
+      "freeze_step": null,
+      "transitions": 0
+    },
+    "different_decisions": false
+  },
+  {
+    "profile": "distribution_shift",
+    "n_cycles": 50,
+    "policy_a": {
+      "name": "threshold",
+      "freeze_step": 24,
+      "transitions": 2
+    },
+    "policy_b": {
+      "name": "sliding_window",
+      "freeze_step": 29,
+      "transitions": 2
+    },
+    "different_decisions": true
+  }
+]

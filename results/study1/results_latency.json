@@ -1,0 +1,41 @@
+[
+  {
+    "policy": "threshold",
+    "n_repeats": 4950,
+    "mean_ms": 0.0017412737373737376,
+    "median_ms": 0.001593,
+    "p99_ms": 0.0029520200000000005,
+    "max_ms": 0.016047,
+    "min_ms": 0.001297,
+    "std_ms": 0.0005247407144400771,
+    "signals_received": 5000,
+    "transitions_issued": 87,
+    "label": "Trivial (O(1))"
+  },
+  {
+    "policy": "sliding_window",
+    "n_repeats": 4950,
+    "mean_ms": 0.006330394141414142,
+    "median_ms": 0.00589,
+    "p99_ms": 0.01171802,
+    "max_ms": 0.020587,
+    "min_ms": 0.005381,
+    "std_ms": 0.0014508507280756335,
+    "signals_received": 5000,
+    "transitions_issued": 107,
+    "label": "Moderate (O(Nk), k=10)"
+  },
+  {
+    "policy": "mann_kendall",
+    "n_repeats": 4950,
+    "mean_ms": 0.03601637797979798,
+    "median_ms": 0.0357565,
+    "p99_ms": 0.041115650000000004,
+    "max_ms": 0.0698,
+    "min_ms": 0.033311,
+    "std_ms": 0.0017350313907328137,
+    "signals_received": 5000,
+    "transitions_issued": 177,
+    "label": "Heavy (O(Nk\u00b2), k=20)"
+  }
+]
