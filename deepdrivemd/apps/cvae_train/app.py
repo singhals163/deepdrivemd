@@ -30,9 +30,25 @@ class CVAETrainApplication(Application):
             )
             trainer.model.load_state_dict(checkpoint["model_state_dict"])
 
-        # Load data
+        # Load contact maps. Simulations save them as object arrays of
+        # sparse COO indices (concat of row, col arrays). When all frames
+        # in a sim have the same number of contacts, numpy auto-promotes
+        # to a 2D array which breaks concatenation with 1D object arrays
+        # from other sims. Normalize to 1D object arrays.
+        def _load_sparse_maps(path):
+            arr = np.load(path, allow_pickle=True)
+            if arr.ndim == 2:
+                # numpy auto-promoted sparse COO to 2D when all frames
+                # had equal contacts, changing inner dtype to object.
+                # Flatten back to 1D object array with int16 elements.
+                out = np.empty(len(arr), dtype=object)
+                for i in range(len(arr)):
+                    out[i] = np.asarray(arr[i], dtype=np.int16)
+                return out
+            return arr
+
         contact_maps = np.concatenate(
-            [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
+            [_load_sparse_maps(p) for p in input_data.contact_map_paths]
         )
         rmsds = np.concatenate([np.load(p) for p in input_data.rmsd_paths])
 
