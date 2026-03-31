@@ -57,48 +57,104 @@ all: format lint # mypy
 PYPATH  := PYTHONPATH=/shivam/deepdrivemd
 EVALDIR := evaluation
 RESDIR  := results
+RUNSDIR := /shivam/deepdrivemd/runs
 
 .PHONY: eval benchmarks figures
 
 eval: benchmarks figures
 
 # ── Benchmarks (grouped by study) ────────────────────────
+# `make benchmarks` runs real data only
+# `make benchmarks-synthetic` runs synthetic workloads only
+# `make benchmarks-all` runs both
 benchmarks: bench-study1 bench-study2 bench-study3
+benchmarks-synthetic: bench-study1-synthetic bench-study2-synthetic bench-study3-synthetic
+benchmarks-all: benchmarks benchmarks-synthetic
 
 .PHONY: bench-study1 bench-study2 bench-study3
+.PHONY: bench-study1-synthetic bench-study2-synthetic bench-study3-synthetic
 
+# ── Study 1: Real ─────────────────────────────────────────
 bench-study1:
-	@echo "=== Study 1: Signal Monitor ==="
-	@mkdir -p $(RESDIR)/study1
+	@echo "=== Study 1: Signal Monitor (real) ==="
+	@mkdir -p $(RESDIR)/study1/real
 	$(PYPATH) python3 -m $(EVALDIR).study1.bench_latency \
-		--repeats 5000 --output $(RESDIR)/study1/results_latency.json
+		--runs-dir $(RUNSDIR) --repeats 5000 --trials 5 \
+		--output $(RESDIR)/study1/real/results_latency.json
 	$(PYPATH) python3 -m $(EVALDIR).study1.bench_concurrency \
-		--threads 50 --signals-per-thread 100 \
-		--output $(RESDIR)/study1/results_concurrency.json
+		--runs-dir $(RUNSDIR) --threads 50 --signals-per-thread 100 --trials 5 \
+		--output $(RESDIR)/study1/real/results_concurrency.json
 	$(PYPATH) python3 -m $(EVALDIR).study1.bench_pluggability \
-		--output $(RESDIR)/study1/results_pluggability.json
+		--runs-dir $(RUNSDIR) \
+		--output $(RESDIR)/study1/real/results_pluggability.json
 
+# ── Study 1: Synthetic ────────────────────────────────────
+bench-study1-synthetic:
+	@echo "=== Study 1: Signal Monitor (synthetic) ==="
+	@mkdir -p $(RESDIR)/study1/synthetic
+	$(PYPATH) python3 -m $(EVALDIR).study1.bench_latency \
+		--synthetic --repeats 5000 --trials 5 \
+		--output $(RESDIR)/study1/synthetic/results_latency.json
+	$(PYPATH) python3 -m $(EVALDIR).study1.bench_concurrency \
+		--synthetic --threads 50 --signals-per-thread 100 --trials 5 \
+		--output $(RESDIR)/study1/synthetic/results_concurrency.json
+	$(PYPATH) python3 -m $(EVALDIR).study1.bench_pluggability \
+		--synthetic \
+		--output $(RESDIR)/study1/synthetic/results_pluggability.json
+
+# ── Study 2: Real ─────────────────────────────────────────
 bench-study2:
-	@echo "=== Study 2: Stateful Service ==="
-	@mkdir -p $(RESDIR)/study2
+	@echo "=== Study 2: Stateful Service (real) ==="
+	@mkdir -p $(RESDIR)/study2/real
 	$(PYPATH) python3 -m $(EVALDIR).study2.bench_latency \
-		--repeats 50 --output $(RESDIR)/study2/results_latency.json
+		--runs-dir $(RUNSDIR) --repeats 10 \
+		--output $(RESDIR)/study2/real/results_latency.json
 	$(PYPATH) python3 -m $(EVALDIR).study2.bench_reproducibility \
-		--epochs 10 --output $(RESDIR)/study2/results_reproducibility.json
+		--runs-dir $(RUNSDIR) \
+		--output $(RESDIR)/study2/real/results_reproducibility.json
 	$(PYPATH) python3 -m $(EVALDIR).study2.bench_memory \
-		--output $(RESDIR)/study2/results_memory.json
+		--runs-dir $(RUNSDIR) --trials 10 \
+		--output $(RESDIR)/study2/real/results_memory.json
 
+# ── Study 2: Synthetic ────────────────────────────────────
+bench-study2-synthetic:
+	@echo "=== Study 2: Stateful Service (synthetic) ==="
+	@mkdir -p $(RESDIR)/study2/synthetic
+	$(PYPATH) python3 -m $(EVALDIR).study2.bench_latency \
+		--synthetic --repeats 20 \
+		--output $(RESDIR)/study2/synthetic/results_latency.json
+	$(PYPATH) python3 -m $(EVALDIR).study2.bench_reproducibility \
+		--synthetic \
+		--output $(RESDIR)/study2/synthetic/results_reproducibility.json
+	$(PYPATH) python3 -m $(EVALDIR).study2.bench_memory \
+		--synthetic --trials 5 \
+		--output $(RESDIR)/study2/synthetic/results_memory.json
+
+# ── Study 3: Real ─────────────────────────────────────────
 bench-study3:
-	@echo "=== Study 3: Resource Broker ==="
-	@mkdir -p $(RESDIR)/study3
+	@echo "=== Study 3: Resource Broker (real) ==="
+	@mkdir -p $(RESDIR)/study3/real
 	$(PYPATH) python3 -m $(EVALDIR).study3.bench_reallocation \
-		--repeats 50 --output $(RESDIR)/study3/results_reallocation.json
+		--runs-dir $(RUNSDIR) --repeats 20 \
+		--output $(RESDIR)/study3/real/results_reallocation.json
 	$(PYPATH) python3 -m $(EVALDIR).study3.bench_throughput \
-		--output $(RESDIR)/study3/results_throughput.json
+		--runs-dir $(RUNSDIR) \
+		--output $(RESDIR)/study3/real/results_throughput.json
 	$(PYPATH) python3 -m $(EVALDIR).study3.bench_draining \
-		--output $(RESDIR)/study3/results_draining.json
+		--runs-dir $(RUNSDIR) \
+		--output $(RESDIR)/study3/real/results_draining.json
 	$(PYPATH) python3 -m $(EVALDIR).study3.bench_cooldown \
-		--output $(RESDIR)/study3/results_cooldown.json
+		--output $(RESDIR)/study3/real/results_cooldown.json
+
+# ── Study 3: Synthetic ────────────────────────────────────
+bench-study3-synthetic:
+	@echo "=== Study 3: Resource Broker (synthetic) ==="
+	@mkdir -p $(RESDIR)/study3/synthetic
+	$(PYPATH) python3 -m $(EVALDIR).study3.bench_reallocation \
+		--synthetic --repeats 20 \
+		--output $(RESDIR)/study3/synthetic/results_reallocation.json
+	$(PYPATH) python3 -m $(EVALDIR).study3.bench_cooldown \
+		--output $(RESDIR)/study3/synthetic/results_cooldown.json
 
 # ── Figures (re-reads results/ and overwrites) ───────────
 figures: fig-study1 fig-study2 fig-study3 fig-overview
@@ -120,5 +176,7 @@ fig-overview:
 # ── Cleanup ──────────────────────────────────────────────
 .PHONY: clean-eval
 clean-eval:
-	rm -rf $(RESDIR)/study1/*.json $(RESDIR)/study2/*.json \
-	       $(RESDIR)/study3/*.json $(RESDIR)/figures/*
+	rm -rf $(RESDIR)/study1/real/*.json $(RESDIR)/study1/synthetic/*.json \
+	       $(RESDIR)/study2/real/*.json $(RESDIR)/study2/synthetic/*.json \
+	       $(RESDIR)/study3/real/*.json $(RESDIR)/study3/synthetic/*.json \
+	       $(RESDIR)/figures/*

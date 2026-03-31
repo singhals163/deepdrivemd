@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Experiment 2.3: Memory Isolation.
+"""Experiment 2.3: Memory Recovery During Freeze/Resume.
 
-Demonstrates that stateless Parsl workers naturally free model memory
-after each task, and that the Stateful Service stores bytes externally
-in Redis rather than in the worker process.
+Measures whether the Stateful Service correctly frees model memory
+during a freeze transition and restores it during resume. This validates
+that the GPU can be fully reclaimed for simulation work when the AI
+model is serialized to Redis.
 
-Measures process RSS at three points:
-  1. Baseline (before model load)
-  2. After loading CVAE + training data
-  3. After del model; gc.collect()
-
-Shows that worker memory returns to near-baseline, confirming that
-model state lives in Redis, not in long-lived worker processes.
+Lifecycle measured:
+  1. Baseline RSS (no model loaded)
+  2. Load real CVAE model + run forward pass (simulates active training)
+  3. Serialize model to Redis + delete local model (simulates freeze)
+  4. Measure RSS — should return to baseline (GPU memory freed)
+  5. Deserialize model from Redis (simulates resume)
+  6. Measure RSS — model is back in memory
 
 Usage:
-    python bench_memory.py [--output results_memory.json]
+    python bench_memory.py --runs-dir /path/to/runs --output real/results_memory.json
+    python bench_memory.py --synthetic --output synthetic/results_memory.json
 """
 import argparse
 import gc
@@ -26,6 +28,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from evaluation.data_loader import (
+    RUNS_DIR,
+    compute_stats,
+    load_checkpoint_paths,
+    load_checkpoint_state_dict,
+    load_contact_maps_dense,
+    build_cvae_model,
+)
+
 
 def get_rss_mb() -> float:
     """Get current process RSS in MB via /proc/self/status."""
@@ -33,10 +44,9 @@ def get_rss_mb() -> float:
         with open("/proc/self/status") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024.0  # kB -> MB
+                    return int(line.split()[1]) / 1024.0
     except FileNotFoundError:
         pass
-    # Fallback for non-Linux
     try:
         import psutil
         return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
@@ -44,115 +54,319 @@ def get_rss_mb() -> float:
         return 0.0
 
 
-def make_cvae(input_dim: int) -> nn.Module:
-    """Create a CVAE-like model matching DeepDriveMD architecture."""
-    flat = input_dim * input_dim
-    return nn.Sequential(
-        nn.Flatten(),
-        nn.Linear(flat, 512),
-        nn.ReLU(),
-        nn.Linear(512, 256),
-        nn.ReLU(),
-        nn.Linear(256, 128),
-        nn.ReLU(),
-        nn.Linear(128, 256),
-        nn.ReLU(),
-        nn.Linear(256, 512),
-        nn.ReLU(),
-        nn.Linear(512, flat),
-        nn.Sigmoid(),
-    )
-
-
-def simulate_worker_lifecycle(input_dim: int, n_samples: int) -> dict:
-    """Simulate a Parsl worker lifecycle: load model, train, cleanup."""
-
-    # Force GC to get clean baseline
+def _gc_and_clear():
     gc.collect()
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
-    # Checkpoint 1: Baseline
+
+def freeze_resume_lifecycle(ckpt_path: Path, contact_maps: torch.Tensor) -> dict:
+    """Simulate a full freeze/resume lifecycle with the Stateful Service.
+
+    1. Load model (active state)
+    2. Serialize to Redis + delete (freeze)
+    3. Deserialize from Redis (resume)
+    """
+    from deepdrivemd.redis_io import init_redis, store_torch, load_torch
+
+    init_redis("127.0.0.1", 6379)
+
+    _gc_and_clear()
     rss_baseline = get_rss_mb()
 
-    # Simulate worker: load model + data
-    model = make_cvae(input_dim)
-    data = torch.rand(n_samples, input_dim, input_dim)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    # --- ACTIVE: Load model, run forward pass ---
+    trainer = build_cvae_model(ckpt_path)
+    model = trainer.model
+    with torch.no_grad():
+        _ = model(contact_maps[:16].clone())
 
-    # Do a small forward/backward pass to allocate intermediate buffers
-    model.train()
-    out = model(data[:16])
-    loss = nn.functional.mse_loss(out, data[:16].view(16, -1).unsqueeze(1).expand_as(out) if out.dim() == 3 else data[:16].view(16, -1))
-    loss.backward()
-    optimizer.step()
+    rss_active = get_rss_mb()
+    state_dict = model.state_dict()
+    n_params = sum(v.numel() for v in state_dict.values())
+    model_bytes = sum(v.nbytes for v in state_dict.values())
 
-    # Checkpoint 2: After model + data loaded
-    rss_loaded = get_rss_mb()
+    # --- FREEZE: Serialize to Redis, delete local model ---
+    redis_key = f"bench:memory:{id(model)}"
+    store_torch(redis_key, state_dict)
+    del state_dict, model, trainer, _
+    _gc_and_clear()
 
-    n_params = sum(p.numel() for p in model.parameters())
-    model_bytes = sum(p.nbytes for p in model.parameters())
+    rss_frozen = get_rss_mb()
 
-    # Simulate worker exit: cleanup
-    del optimizer, loss, out, data, model
-    gc.collect()
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    # --- RESUME: Deserialize from Redis ---
+    loaded_state = load_torch(redis_key, map_location="cpu")
+    resume_trainer = build_cvae_model()  # fresh model
+    resume_trainer.model.load_state_dict(loaded_state)
+    with torch.no_grad():
+        _ = resume_trainer.model(contact_maps[:16].clone())
 
-    # Checkpoint 3: After cleanup
-    rss_cleaned = get_rss_mb()
+    rss_resumed = get_rss_mb()
+
+    # Cleanup
+    del loaded_state, resume_trainer, _
+    _gc_and_clear()
+
+    memory_increase = rss_active - rss_baseline
+    memory_freed = rss_active - rss_frozen
+    memory_restored = rss_resumed - rss_frozen
 
     return {
-        "input_dim": input_dim,
-        "n_samples": n_samples,
         "n_params": n_params,
         "model_bytes": model_bytes,
         "model_mb": model_bytes / (1024 * 1024),
         "rss_baseline_mb": rss_baseline,
-        "rss_loaded_mb": rss_loaded,
-        "rss_cleaned_mb": rss_cleaned,
-        "memory_increase_mb": rss_loaded - rss_baseline,
-        "memory_recovered_mb": rss_loaded - rss_cleaned,
-        "recovery_pct": ((rss_loaded - rss_cleaned) / max(rss_loaded - rss_baseline, 0.01)) * 100,
+        "rss_active_mb": rss_active,
+        "rss_frozen_mb": rss_frozen,
+        "rss_resumed_mb": rss_resumed,
+        "memory_increase_mb": memory_increase,
+        "memory_freed_mb": memory_freed,
+        "memory_restored_mb": memory_restored,
+        "freeze_recovery_pct": (memory_freed / max(memory_increase, 0.01)) * 100,
+    }
+
+
+def freeze_resume_state_dict(ckpt_path: Path) -> dict:
+    """Freeze/resume lifecycle using raw state_dict (no model architecture needed).
+
+    Works for any checkpoint size — just loads tensors into memory,
+    serializes to Redis, deletes, deserializes back.
+    """
+    from deepdrivemd.redis_io import init_redis, store_torch, load_torch
+
+    init_redis("127.0.0.1", 6379)
+
+    _gc_and_clear()
+    rss_baseline = get_rss_mb()
+
+    # ACTIVE: load state_dict tensors into memory
+    state_dict = load_checkpoint_state_dict(ckpt_path)
+    # Force tensors into contiguous memory
+    tensors = {k: v.clone() for k, v in state_dict.items()}
+    n_params = sum(v.numel() for v in tensors.values())
+    model_bytes = sum(v.nbytes for v in tensors.values())
+
+    rss_active = get_rss_mb()
+
+    # FREEZE: serialize to Redis, delete local tensors
+    redis_key = f"bench:memory:sd:{id(tensors)}"
+    store_torch(redis_key, tensors)
+    del tensors, state_dict
+    _gc_and_clear()
+
+    rss_frozen = get_rss_mb()
+
+    # RESUME: deserialize from Redis
+    loaded = load_torch(redis_key, map_location="cpu")
+    # Force into memory
+    resumed_tensors = {k: v.clone() for k, v in loaded.items()}
+    del loaded
+
+    rss_resumed = get_rss_mb()
+
+    del resumed_tensors
+    _gc_and_clear()
+
+    memory_increase = rss_active - rss_baseline
+    memory_freed = rss_active - rss_frozen
+    memory_restored = rss_resumed - rss_frozen
+
+    return {
+        "n_params": n_params,
+        "model_bytes": model_bytes,
+        "model_mb": model_bytes / (1024 * 1024),
+        "rss_baseline_mb": rss_baseline,
+        "rss_active_mb": rss_active,
+        "rss_frozen_mb": rss_frozen,
+        "rss_resumed_mb": rss_resumed,
+        "memory_increase_mb": memory_increase,
+        "memory_freed_mb": memory_freed,
+        "memory_restored_mb": memory_restored,
+        "freeze_recovery_pct": (memory_freed / max(memory_increase, 0.01)) * 100,
+    }
+
+
+def freeze_resume_synthetic(n_params: int, label: str) -> dict:
+    """Synthetic version using nn.Linear models."""
+    from deepdrivemd.redis_io import init_redis, store_torch, load_torch
+
+    init_redis("127.0.0.1", 6379)
+
+    dim = max(int(np.sqrt(n_params / 2)), 4)
+    _gc_and_clear()
+    rss_baseline = get_rss_mb()
+
+    # ACTIVE
+    model = nn.Sequential(nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+    data = torch.rand(16, dim)
+    with torch.no_grad():
+        _ = model(data)
+
+    rss_active = get_rss_mb()
+    state_dict = model.state_dict()
+    actual_params = sum(v.numel() for v in state_dict.values())
+    model_bytes = sum(v.nbytes for v in state_dict.values())
+
+    # FREEZE
+    redis_key = f"bench:memory:synth:{label}"
+    store_torch(redis_key, state_dict)
+    del state_dict, model, data, _
+    _gc_and_clear()
+
+    rss_frozen = get_rss_mb()
+
+    # RESUME
+    loaded = load_torch(redis_key, map_location="cpu")
+    model2 = nn.Sequential(nn.Linear(dim, dim), nn.ReLU(), nn.Linear(dim, dim))
+    model2.load_state_dict(loaded)
+    with torch.no_grad():
+        _ = model2(torch.rand(16, dim))
+
+    rss_resumed = get_rss_mb()
+    del loaded, model2, _
+    _gc_and_clear()
+
+    memory_increase = rss_active - rss_baseline
+    memory_freed = rss_active - rss_frozen
+
+    return {
+        "n_params": actual_params,
+        "model_bytes": model_bytes,
+        "model_mb": model_bytes / (1024 * 1024),
+        "rss_baseline_mb": rss_baseline,
+        "rss_active_mb": rss_active,
+        "rss_frozen_mb": rss_frozen,
+        "rss_resumed_mb": rss_resumed,
+        "memory_increase_mb": memory_increase,
+        "memory_freed_mb": memory_freed,
+        "memory_restored_mb": rss_resumed - rss_frozen,
+        "freeze_recovery_pct": (memory_freed / max(memory_increase, 0.01)) * 100,
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Memory isolation benchmark")
+    parser = argparse.ArgumentParser(description="Memory freeze/resume benchmark")
+    parser.add_argument("--runs-dir", type=str, default=str(RUNS_DIR))
+    parser.add_argument("--trials", type=int, default=10)
+    parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--output", type=str, default="results_memory.json")
     args = parser.parse_args()
 
-    configs = [
-        ("BBA (28x28)", 28, 128),
-        ("CLN025 (50x50)", 50, 64),
-        ("NTL9 (100x100)", 100, 32),
-    ]
+    if args.synthetic:
+        print("=== Synthetic freeze/resume lifecycle ===")
+        configs = [
+            ("BBA-scale (~200K)", 200_000),
+            ("CLN025-scale (~2M)", 2_000_000),
+            ("KRAS-scale (~66M)", 66_000_000),
+        ]
+        all_results = []
+        for label, n_params in configs:
+            print(f"\n  {label}")
+            trials = []
+            for i in range(args.trials):
+                result = freeze_resume_synthetic(n_params, f"{label}:{i}")
+                trials.append(result)
 
-    results = []
-    for name, dim, n_samples in configs:
-        print(f"\n=== {name} ===")
-        result = simulate_worker_lifecycle(dim, n_samples)
-        result["config_name"] = name
-        results.append(result)
+            # Drop first trial (cold start)
+            if len(trials) > 2:
+                trials = trials[1:]
 
-        print(f"  Model: {result['n_params']:,} params ({result['model_mb']:.2f} MB)")
-        print(f"  RSS baseline:  {result['rss_baseline_mb']:.1f} MB")
-        print(f"  RSS loaded:    {result['rss_loaded_mb']:.1f} MB (+{result['memory_increase_mb']:.1f} MB)")
-        print(f"  RSS cleaned:   {result['rss_cleaned_mb']:.1f} MB")
-        print(f"  Recovery:      {result['memory_recovered_mb']:.1f} MB ({result['recovery_pct']:.0f}%)")
+            freed = [t["memory_freed_mb"] for t in trials]
+            recovery = [t["freeze_recovery_pct"] for t in trials]
+            all_results.append({
+                "config_name": label,
+                "data_source": "synthetic",
+                "n_trials": len(trials),
+                "n_params": trials[0]["n_params"],
+                "model_mb": trials[0]["model_mb"],
+                "memory_freed": compute_stats(np.array(freed), unit="mb"),
+                "freeze_recovery_pct": compute_stats(np.array(recovery), unit="pct"),
+                "trials": trials,
+            })
+            print(f"    Freed: {all_results[-1]['memory_freed']['mean_mb']:.1f} MB, "
+                  f"Recovery: {all_results[-1]['freeze_recovery_pct']['mean_pct']:.0f}%")
+        output = all_results
 
-    # Summary
-    print("\n--- Summary ---")
-    print(f"{'Config':<20} {'Params':>10} {'Baseline (MB)':>14} {'Loaded (MB)':>12} {'Cleaned (MB)':>13} {'Recovery':>10}")
-    print("-" * 82)
-    for r in results:
-        print(f"{r['config_name']:<20} {r['n_params']:>10,} {r['rss_baseline_mb']:>14.1f} "
-              f"{r['rss_loaded_mb']:>12.1f} {r['rss_cleaned_mb']:>13.1f} {r['recovery_pct']:>9.0f}%")
+    else:
+        print("=== Real freeze/resume lifecycle ===")
+        runs_dir = Path(args.runs_dir)
+        ckpt_paths = load_checkpoint_paths(runs_dir)
+        if not ckpt_paths:
+            print("ERROR: No checkpoints found.")
+            return
 
-    print("\nKey insight: Parsl workers naturally free model memory after each task.")
-    print("The Stateful Service stores model bytes in Redis, external to the worker process.")
+        # Group by model size
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for p in ckpt_paths:
+            sd = load_checkpoint_state_dict(p)
+            n_params = sum(v.numel() for v in sd.values())
+            groups[n_params].append(p)
+        del sd
+
+        print(f"Found {len(groups)} model sizes: "
+              + ", ".join(f"{n:,} ({len(ps)} ckpts)" for n, ps in sorted(groups.items())))
+
+        # Load contact maps for BBA forward pass
+        contact_maps = load_contact_maps_dense(runs_dir, max_sims=5)
+        print(f"Loaded {len(contact_maps)} contact map frames\n")
+
+        all_configs = []
+        for n_params in sorted(groups.keys()):
+            paths = groups[n_params]
+            sd = load_checkpoint_state_dict(paths[0])
+            n_bytes = sum(v.nbytes for v in sd.values())
+            is_bba = n_params < 1_000_000
+            del sd
+
+            if is_bba:
+                label = f"BBA CVAE ({n_params:,} params, {n_bytes/(1024*1024):.1f} MB)"
+            elif n_params < 10_000_000:
+                label = f"CVAE ({n_params:,} params, {n_bytes/(1024*1024):.1f} MB)"
+            else:
+                label = f"Large CVAE ({n_params:,} params, {n_bytes/(1024*1024):.1f} MB)"
+
+            n_trials = min(args.trials, len(paths))
+            print(f"{label}: {n_trials} trials")
+
+            trials = []
+            for i in range(n_trials):
+                if is_bba:
+                    result = freeze_resume_lifecycle(paths[i], contact_maps)
+                else:
+                    result = freeze_resume_state_dict(paths[i])
+                trials.append(result)
+                print(f"  Trial {i+1}: freed={result['memory_freed_mb']:.1f}MB "
+                      f"restored={result['memory_restored_mb']:.1f}MB")
+
+            # Drop first trial (cold start)
+            if len(trials) > 2:
+                trials = trials[1:]
+
+            freed = [t["memory_freed_mb"] for t in trials]
+            increases = [t["memory_increase_mb"] for t in trials]
+            restored = [t["memory_restored_mb"] for t in trials]
+
+            config = {
+                "config_name": label,
+                "data_source": "real_checkpoints",
+                "n_trials": len(trials),
+                "n_params": n_params,
+                "model_mb": n_bytes / (1024 * 1024),
+                "memory_increase": compute_stats(np.array(increases), unit="mb"),
+                "memory_freed": compute_stats(np.array(freed), unit="mb"),
+                "memory_restored": compute_stats(np.array(restored), unit="mb"),
+                "trials": trials,
+            }
+            all_configs.append(config)
+            print(f"  Summary: freed={config['memory_freed']['mean_mb']:.1f} MB, "
+                  f"restored={config['memory_restored']['mean_mb']:.1f} MB\n")
+
+        output = all_configs
 
     output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(output, f, indent=2)
     print(f"\nResults saved to {output_path}")
 
 

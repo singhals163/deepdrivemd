@@ -1,0 +1,329 @@
+[
+  {
+    "config_name": "BBA CVAE (821,591 params, 3.1 MB)",
+    "data_source": "real_checkpoints",
+    "n_trials": 4,
+    "n_params": 821591,
+    "model_mb": 3.1341209411621094,
+    "memory_increase": {
+      "mean_mb": 9.0771484375,
+      "std_mb": 0.02317150491739194,
+      "median_mb": 9.064453125,
+      "p99_mb": 9.1156640625,
+      "min_mb": 9.0625,
+      "max_mb": 9.1171875,
+      "ci95_mb": 0.0227080748190441,
+      "n": 4,
+      "raw_mb": [
+        9.1171875,
+        9.06640625,
+        9.0625,
+        9.0625
+      ]
+    },
+    "memory_freed": {
+      "mean_mb": 2.265625,
+      "std_mb": 3.9241776108982376,
+      "median_mb": 0.0,
+      "p99_mb": 8.790624999999999,
+      "min_mb": 0.0,
+      "max_mb": 9.0625,
+      "ci95_mb": 3.8456940586802726,
+      "n": 4,
+      "raw_mb": [
+        9.0625,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "memory_restored": {
+      "mean_mb": 0.734375,
+      "std_mb": 3.9241776108982376,
+      "median_mb": -1.53125,
+      "p99_mb": 7.259374999999998,
+      "min_mb": -1.53125,
+      "max_mb": 7.53125,
+      "ci95_mb": 3.8456940586802726,
+      "n": 4,
+      "raw_mb": [
+        7.53125,
+        -1.53125,
+        -1.53125,
+        -1.53125
+      ]
+    },
+    "trials": [
+      {
+        "n_params": 821591,
+        "model_bytes": 3286364,
+        "model_mb": 3.1341209411621094,
+        "rss_baseline_mb": 686.20703125,
+        "rss_active_mb": 695.32421875,
+        "rss_frozen_mb": 686.26171875,
+        "rss_resumed_mb": 693.79296875,
+        "memory_increase_mb": 9.1171875,
+        "memory_freed_mb": 9.0625,
+        "memory_restored_mb": 7.53125,
+        "freeze_recovery_pct": 99.40017137960582
+      },
+      {
+        "n_params": 821591,
+        "model_bytes": 3286364,
+        "model_mb": 3.1341209411621094,
+        "rss_baseline_mb": 686.26171875,
+        "rss_active_mb": 695.328125,
+        "rss_frozen_mb": 695.328125,
+        "rss_resumed_mb": 693.796875,
+        "memory_increase_mb": 9.06640625,
+        "memory_freed_mb": 0.0,
+        "memory_restored_mb": -1.53125,
+        "freeze_recovery_pct": 0.0
+      },
+      {
+        "n_params": 821591,
+        "model_bytes": 3286364,
+        "model_mb": 3.1341209411621094,
+        "rss_baseline_mb": 686.265625,
+        "rss_active_mb": 695.328125,
+        "rss_frozen_mb": 695.328125,
+        "rss_resumed_mb": 693.796875,
+        "memory_increase_mb": 9.0625,
+        "memory_freed_mb": 0.0,
+        "memory_restored_mb": -1.53125,
+        "freeze_recovery_pct": 0.0
+      },
+      {
+        "n_params": 821591,
+        "model_bytes": 3286364,
+        "model_mb": 3.1341209411621094,
+        "rss_baseline_mb": 686.265625,
+        "rss_active_mb": 695.328125,
+        "rss_frozen_mb": 695.328125,
+        "rss_resumed_mb": 693.796875,
+        "memory_increase_mb": 9.0625,
+        "memory_freed_mb": 0.0,
+        "memory_restored_mb": -1.53125,
+        "freeze_recovery_pct": 0.0
+      }
+    ]
+  },
+  {
+    "config_name": "CVAE (1,660,439 params, 6.3 MB)",
+    "data_source": "real_checkpoints",
+    "n_trials": 4,
+    "n_params": 1660439,
+    "model_mb": 6.334072113037109,
+    "memory_increase": {
+      "mean_mb": 9.28125,
+      "std_mb": 5.358532185916214,
+      "median_mb": 12.375,
+      "p99_mb": 12.375,
+      "min_mb": 0.0,
+      "max_mb": 12.375,
+      "ci95_mb": 5.25136154219789,
+      "n": 4,
+      "raw_mb": [
+        12.375,
+        12.375,
+        0.0,
+        12.375
+      ]
+    },
+    "memory_freed": {
+      "mean_mb": 7.7548828125,
+      "std_mb": 8.108622021712655,
+      "median_mb": 12.375,
+      "p99_mb": 12.5530859375,
+      "min_mb": -6.2890625,
+      "max_mb": 12.55859375,
+      "ci95_mb": 7.946449581278402,
+      "n": 4,
+      "raw_mb": [
+        12.375,
+        -6.2890625,
+        12.55859375,
+        12.375
+      ]
+    },
+    "memory_restored": {
+      "mean_mb": 7.892578125,
+      "std_mb": 8.08177613141025,
+      "median_mb": 12.55859375,
+      "p99_mb": 12.55859375,
+      "min_mb": -6.10546875,
+      "max_mb": 12.55859375,
+      "ci95_mb": 7.920140608782044,
+      "n": 4,
+      "raw_mb": [
+        12.55859375,
+        -6.10546875,
+        12.55859375,
+        12.55859375
+      ]
+    },
+    "trials": [
+      {
+        "n_params": 1660439,
+        "model_bytes": 6641756,
+        "model_mb": 6.334072113037109,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 699.25390625,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 699.4375,
+        "memory_increase_mb": 12.375,
+        "memory_freed_mb": 12.375,
+        "memory_restored_mb": 12.55859375,
+        "freeze_recovery_pct": 100.0
+      },
+      {
+        "n_params": 1660439,
+        "model_bytes": 6641756,
+        "model_mb": 6.334072113037109,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 699.25390625,
+        "rss_frozen_mb": 705.54296875,
+        "rss_resumed_mb": 699.4375,
+        "memory_increase_mb": 12.375,
+        "memory_freed_mb": -6.2890625,
+        "memory_restored_mb": -6.10546875,
+        "freeze_recovery_pct": -50.82070707070707
+      },
+      {
+        "n_params": 1660439,
+        "model_bytes": 6641756,
+        "model_mb": 6.334072113037109,
+        "rss_baseline_mb": 699.4375,
+        "rss_active_mb": 699.4375,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 699.4375,
+        "memory_increase_mb": 0.0,
+        "memory_freed_mb": 12.55859375,
+        "memory_restored_mb": 12.55859375,
+        "freeze_recovery_pct": 125585.9375
+      },
+      {
+        "n_params": 1660439,
+        "model_bytes": 6641756,
+        "model_mb": 6.334072113037109,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 699.25390625,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 699.4375,
+        "memory_increase_mb": 12.375,
+        "memory_freed_mb": 12.375,
+        "memory_restored_mb": 12.55859375,
+        "freeze_recovery_pct": 100.0
+      }
+    ]
+  },
+  {
+    "config_name": "Large CVAE (20,617,511 params, 78.6 MB)",
+    "data_source": "real_checkpoints",
+    "n_trials": 4,
+    "n_params": 20617511,
+    "model_mb": 78.64956283569336,
+    "memory_increase": {
+      "mean_mb": 156.265625,
+      "std_mb": 0.0,
+      "median_mb": 156.265625,
+      "p99_mb": 156.265625,
+      "min_mb": 156.265625,
+      "max_mb": 156.265625,
+      "ci95_mb": 0.0,
+      "n": 4,
+      "raw_mb": [
+        156.265625,
+        156.265625,
+        156.265625,
+        156.265625
+      ]
+    },
+    "memory_freed": {
+      "mean_mb": 156.265625,
+      "std_mb": 0.0,
+      "median_mb": 156.265625,
+      "p99_mb": 156.265625,
+      "min_mb": 156.265625,
+      "max_mb": 156.265625,
+      "ci95_mb": 0.0,
+      "n": 4,
+      "raw_mb": [
+        156.265625,
+        156.265625,
+        156.265625,
+        156.265625
+      ]
+    },
+    "memory_restored": {
+      "mean_mb": 78.1328125,
+      "std_mb": 0.0,
+      "median_mb": 78.1328125,
+      "p99_mb": 78.1328125,
+      "min_mb": 78.1328125,
+      "max_mb": 78.1328125,
+      "ci95_mb": 0.0,
+      "n": 4,
+      "raw_mb": [
+        78.1328125,
+        78.1328125,
+        78.1328125,
+        78.1328125
+      ]
+    },
+    "trials": [
+      {
+        "n_params": 20617511,
+        "model_bytes": 82470044,
+        "model_mb": 78.64956283569336,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 843.14453125,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 765.01171875,
+        "memory_increase_mb": 156.265625,
+        "memory_freed_mb": 156.265625,
+        "memory_restored_mb": 78.1328125,
+        "freeze_recovery_pct": 100.0
+      },
+      {
+        "n_params": 20617511,
+        "model_bytes": 82470044,
+        "model_mb": 78.64956283569336,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 843.14453125,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 765.01171875,
+        "memory_increase_mb": 156.265625,
+        "memory_freed_mb": 156.265625,
+        "memory_restored_mb": 78.1328125,
+        "freeze_recovery_pct": 100.0
+      },
+      {
+        "n_params": 20617511,
+        "model_bytes": 82470044,
+        "model_mb": 78.64956283569336,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 843.14453125,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 765.01171875,
+        "memory_increase_mb": 156.265625,
+        "memory_freed_mb": 156.265625,
+        "memory_restored_mb": 78.1328125,
+        "freeze_recovery_pct": 100.0
+      },
+      {
+        "n_params": 20617511,
+        "model_bytes": 82470044,
+        "model_mb": 78.64956283569336,
+        "rss_baseline_mb": 686.87890625,
+        "rss_active_mb": 843.14453125,
+        "rss_frozen_mb": 686.87890625,
+        "rss_resumed_mb": 765.01171875,
+        "memory_increase_mb": 156.265625,
+        "memory_freed_mb": 156.265625,
+        "memory_restored_mb": 78.1328125,
+        "freeze_recovery_pct": 100.0
+      }
+    ]
+  }
+]

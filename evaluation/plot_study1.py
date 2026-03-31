@@ -2,8 +2,8 @@
 """Generate figures for Study 1: Signal Monitor.
 
 Produces:
-  - fig_study1a_latency: Bar chart of per-policy latency (mean + p99)
-  - fig_study1b_pluggability: Timeline showing different freeze points per policy
+  - fig_study1a_latency: Bar chart of per-policy latency with CI95 error bars
+  - fig_study1b_pluggability: Real training loss curves with freeze-point markers
 """
 import json
 import sys
@@ -18,46 +18,46 @@ from evaluation.plot_config import (
 )
 
 apply_style()
-S1_DIR = RESULTS_DIR / "study1"
+S1_DIR = RESULTS_DIR / "study1" / "real"
 
 
 def plot_latency():
     with open(S1_DIR / "results_latency.json") as f:
         data = json.load(f)
 
-    short_labels = ["Threshold\nO(1)", "Sliding Window\nO(Nk)", "Mann-Kendall\nO(Nk²)"]
+    labels = [d["label"] for d in data]
     means = [d["mean_ms"] for d in data]
-    p99s = [d["p99_ms"] for d in data]
-    maxes = [d["max_ms"] for d in data]
+    ci95s = [d["ci95_ms"] for d in data]
+    p99_means = [d["p99"]["mean_ms"] for d in data]
+    p99_ci95s = [d["p99"]["ci95_ms"] for d in data]
+    max_means = [d["max"]["mean_ms"] for d in data]
+    max_ci95s = [d["max"]["ci95_ms"] for d in data]
 
-    x = np.arange(len(short_labels))
+    x = np.arange(len(labels))
     width = 0.25
 
     fig, ax = plt.subplots(figsize=(5, 3.5))
-    bars1 = ax.bar(x - width, means, width, label="Mean", color=BLUE, edgecolor="white")
-    bars2 = ax.bar(x, p99s, width, label="P99", color=ORANGE, edgecolor="white")
-    bars3 = ax.bar(x + width, maxes, width, label="Max", color=RED, edgecolor="white")
+    ax.bar(x - width, means, width, yerr=ci95s, capsize=3,
+           label="Mean", color=BLUE, edgecolor="white")
+    ax.bar(x, p99_means, width, yerr=p99_ci95s, capsize=3,
+           label="P99", color=ORANGE, edgecolor="white")
+    ax.bar(x + width, max_means, width, yerr=max_ci95s, capsize=3,
+           label="Max", color=RED, edgecolor="white")
 
     ax.set_ylabel("Latency (ms)")
     ax.set_xlabel("Policy Complexity")
     ax.set_title("Signal Monitor Interface Overhead")
     ax.set_xticks(x)
-    ax.set_xticklabels(short_labels)
+    ax.set_xticklabels(labels, fontsize=8)
     ax.legend(loc="upper left")
 
-    for bars in [bars1, bars2, bars3]:
-        for bar in bars:
-            h = bar.get_height()
-            ax.annotate(f"{h:.3f}",
-                        xy=(bar.get_x() + bar.get_width() / 2, h),
-                        xytext=(0, 3), textcoords="offset points",
-                        ha="center", va="bottom", fontsize=7)
-
-    ax.annotate("Simulation cycle: 1,620,000 ms (27 min)",
+    n_trials = data[0].get("n_trials", "?")
+    n_repeats = data[0].get("n_repeats_per_trial", "?")
+    ax.annotate(f"N={n_trials} trials x {n_repeats} repeats, real training loss",
                 xy=(0.5, 0.95), xycoords="axes fraction",
-                ha="center", fontsize=8, fontstyle="italic", color="gray")
+                ha="center", fontsize=7, fontstyle="italic", color="gray")
 
-    ax.set_ylim(0, max(maxes) * 1.4)
+    ax.set_ylim(0, max(max_means) * 1.5)
     fig.tight_layout()
     savefig(fig, "fig_study1a_latency")
     plt.close(fig)
@@ -67,27 +67,22 @@ def plot_pluggability():
     with open(S1_DIR / "results_pluggability.json") as f:
         data = json.load(f)
 
-    rng = np.random.default_rng(42)
-    profiles = {
-        "fast_converge": 0.5 * np.exp(-0.15 * np.arange(50)) + 0.02,
-        "slow_converge": 0.5 * np.exp(-0.03 * np.arange(50)) + 0.08,
-        "distribution_shift": np.concatenate([
-            0.5 * np.exp(-0.1 * np.arange(25)),
-            0.5 * np.exp(-0.1 * 24) + 0.02 * np.arange(25),
-        ]),
-    }
-    profile_labels = {
-        "fast_converge": "Fast Convergence\n(KRAS-like)",
-        "slow_converge": "Slow Convergence\n(BBA-like)",
-        "distribution_shift": "Distribution Shift\n(CLN025-like)",
-    }
+    n_panels = min(len(data), 5)
+    fig, axes = plt.subplots(1, n_panels, figsize=(3.5 * n_panels, 3.5), sharey=True)
+    if n_panels == 1:
+        axes = [axes]
 
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.5), sharey=True)
+    for ax, result in zip(axes, data[:n_panels]):
+        # Read real loss curve from JSON (normalized)
+        if "loss_curve_normalized" in result:
+            losses = np.array(result["loss_curve_normalized"])
+        elif "loss_curve" in result:
+            losses = np.array(result["loss_curve"])
+            losses = losses / losses[0]  # normalize
+        else:
+            continue
 
-    for ax, (profile_key, losses), result in zip(axes, profiles.items(), data):
-        noise = rng.normal(0, 0.005, len(losses))
-        noisy_losses = np.clip(losses + noise, 0.001, 1.0)
-        ax.plot(noisy_losses, color=GRAY_DARK, linewidth=1.2, label="Training loss")
+        ax.plot(losses, color=GRAY_DARK, linewidth=1.2, label="Training loss")
 
         freeze_a = result["policy_a"]["freeze_step"]
         freeze_b = result["policy_b"]["freeze_step"]
@@ -96,16 +91,18 @@ def plot_pluggability():
                        label=f"Threshold (step {freeze_a})")
         if freeze_b is not None:
             ax.axvline(x=freeze_b, color=ORANGE, linestyle="-.", linewidth=1.5,
-                       label=f"Sliding Window (step {freeze_b})")
+                       label=f"SlidingWindow (step {freeze_b})")
 
-        ax.set_title(profile_labels[profile_key], fontsize=10)
-        ax.set_xlabel("Training Cycle")
+        exp_name = result["profile"].replace("experiment-310326-", "")
+        n_runs = result.get("n_training_runs", "?")
+        ax.set_title(f"{exp_name}\n({n_runs} runs)", fontsize=9)
+        ax.set_xlabel("Epoch")
         if ax == axes[0]:
-            ax.set_ylabel("Loss")
-        ax.legend(fontsize=7, loc="upper right")
-        ax.set_xlim(0, 50)
+            ax.set_ylabel("Normalized Loss")
+        ax.legend(fontsize=6, loc="upper right")
 
-    fig.suptitle("Policy Pluggability: Same Interface, Different Decisions", fontsize=12, y=1.02)
+    fig.suptitle("Policy Pluggability: Same Interface, Different Decisions\n(real training data)",
+                 fontsize=11, y=1.04)
     fig.tight_layout()
     savefig(fig, "fig_study1b_pluggability")
     plt.close(fig)
@@ -114,5 +111,7 @@ def plot_pluggability():
 if __name__ == "__main__":
     print("=== Study 1 Figures ===")
     plot_latency()
+    print("  fig_study1a_latency done")
     plot_pluggability()
+    print("  fig_study1b_pluggability done")
     print("Done.")

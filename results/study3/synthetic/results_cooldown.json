@@ -1,0 +1,72 @@
+{
+  "tests": [
+    {
+      "test": "no_cooldown",
+      "cooldown_sec": 0.0,
+      "attempted_transitions": 20,
+      "successful_transitions": 20,
+      "total_logged": 20,
+      "passed": true
+    },
+    {
+      "test": "with_cooldown",
+      "cooldown_sec": 0.1,
+      "attempt_interval_ms": 10,
+      "total_attempts": 40,
+      "successful_transitions": 2,
+      "total_logged": 2,
+      "throttled": true,
+      "passed": true
+    },
+    {
+      "test": "cooldown_expires",
+      "cooldown_sec": 0.05,
+      "results": [
+        {
+          "action": "freeze_1",
+          "success": true
+        },
+        {
+          "action": "resume_immediate",
+          "success": false
+        },
+        {
+          "action": "resume_after_cooldown",
+          "success": true
+        },
+        {
+          "action": "freeze_immediate",
+          "success": false
+        },
+        {
+          "action": "freeze_after_cooldown",
+          "success": true
+        }
+      ],
+      "expected": [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      "actual": [
+        true,
+        false,
+        true,
+        false,
+        true
+      ],
+      "passed": true
+    },
+    {
+      "test": "cooldown_stress",
+      "cooldown_sec": 0.05,
+      "total_attempts": 100,
+      "successful_transitions": 3,
+      "throttle_ratio": 0.97,
+      "passed": true
+    }
+  ],
+  "all_passed": true
+}

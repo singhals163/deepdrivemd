@@ -2,8 +2,8 @@
 """Generate figures for Study 3: Resource Broker.
 
 Produces:
-  - fig_study3a_reallocation: Reallocation latency vs in-flight tasks
-  - fig_study3b_throughput: Throughput improvement from GPU reclaim
+  - fig_study3a_reallocation: Reallocation latency with CI95 error bars
+  - fig_study3b_throughput: Real throughput with error bars + analytical model
   - fig_study3c_cooldown: Cooldown throttling effectiveness
 """
 import json
@@ -19,7 +19,7 @@ from evaluation.plot_config import (
 )
 
 apply_style()
-S3_DIR = RESULTS_DIR / "study3"
+S3_DIR = RESULTS_DIR / "study3" / "real"
 
 
 def plot_reallocation():
@@ -28,35 +28,36 @@ def plot_reallocation():
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
+    labels = [d["label"].split("(")[0].strip() for d in data]
     n_inflight = [d["n_inflight"] for d in data]
     init_mean = [d["initiation"]["mean_ms"] for d in data]
+    init_ci = [d["initiation"]["ci95_ms"] for d in data]
     total_mean = [d["total"]["mean_ms"] for d in data]
+    total_ci = [d["total"]["ci95_ms"] for d in data]
 
-    x = np.arange(len(n_inflight))
-    ax1.bar(x, init_mean, 0.5, color=BLUE, edgecolor="white")
-    for i, v in enumerate(init_mean):
-        ax1.annotate(f"{v:.4f}", xy=(i, v), xytext=(0, 3),
+    x = np.arange(len(labels))
+    ax1.bar(x, init_mean, 0.5, yerr=init_ci, capsize=3,
+            color=BLUE, edgecolor="white")
+    for i, (v, ci) in enumerate(zip(init_mean, init_ci)):
+        ax1.annotate(f"{v:.4f}", xy=(i, v + ci), xytext=(0, 3),
                      textcoords="offset points", ha="center", fontsize=8)
     ax1.set_ylabel("Initiation Latency (ms)")
     ax1.set_xlabel("In-flight ML Tasks")
     ax1.set_title("Broker Decision Overhead")
     ax1.set_xticks(x)
     ax1.set_xticklabels(n_inflight)
-    ax1.set_ylim(0, max(init_mean) * 2)
 
     colors = [GREEN, "#8BC34A", "#FFC107", ORANGE]
-    ax2.bar(x, total_mean, 0.5, color=colors, edgecolor="white")
-    for i, v in enumerate(total_mean):
-        ax2.annotate(f"{v:.1f}", xy=(i, v), xytext=(0, 3),
+    ax2.bar(x, total_mean, 0.5, yerr=total_ci, capsize=3,
+            color=colors, edgecolor="white")
+    for i, (v, ci) in enumerate(zip(total_mean, total_ci)):
+        ax2.annotate(f"{v:.1f}", xy=(i, v + ci), xytext=(0, 3),
                      textcoords="offset points", ha="center", fontsize=8)
-    expected = [d["n_inflight"] * d["drain_delay_s"] * 1000 for d in data]
-    ax2.plot(x, expected, "ro--", markersize=6, label="Expected (N × 10ms)")
     ax2.set_ylabel("Total Transition Time (ms)")
     ax2.set_xlabel("In-flight ML Tasks")
-    ax2.set_title("End-to-End Reallocation Latency\n(includes graceful drain)")
+    ax2.set_title("End-to-End Reallocation Latency\n(drain delays from real train durations)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(n_inflight)
-    ax2.legend()
 
     fig.tight_layout()
     savefig(fig, "fig_study3a_reallocation")
@@ -67,49 +68,46 @@ def plot_throughput():
     with open(S3_DIR / "results_throughput.json") as f:
         data = json.load(f)
 
-    scaling = data["scaling"]
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
-    systems = [s["system"].split(" (")[0] for s in scaling]
-    before = [s["throughput_before"] for s in scaling]
-    after = [s["throughput_after"] for s in scaling]
+    # Left: real throughput per experiment
+    if "real_data" in data:
+        rd = data["real_data"]
+        exps = rd["experiments"]
+        exp_names = [e["experiment"].replace("experiment-310326-", "") for e in exps]
+        tps = [e["throughput_sims_per_min"] for e in exps]
 
-    x = np.arange(len(systems))
-    width = 0.3
-    ax1.bar(x - width/2, before, width, label="7 GPUs (before)", color=GRAY, edgecolor="gray")
-    ax1.bar(x + width/2, after, width, label="8 GPUs (after)", color=GREEN, edgecolor="gray")
-    ax1.set_ylabel("Throughput (sims/min)")
-    ax1.set_title("Simulation Throughput: GPU Reclaim")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(systems)
-    ax1.legend(fontsize=8)
-    ax1.set_yscale("log")
-    for i in range(len(systems)):
-        ax1.annotate("+14.3%", xy=(i + width/2, after[i]),
-                     xytext=(0, 3), textcoords="offset points",
-                     ha="center", fontsize=7, color=GREEN_DARK, fontweight="bold")
+        x = np.arange(len(exp_names))
+        ax1.bar(x, tps, 0.6, color=BLUE, edgecolor="white")
+        mean_tp = rd["throughput"]["mean_spm"]
+        ci95_tp = rd["throughput"]["ci95_spm"]
+        ax1.axhline(y=mean_tp, color=RED, linestyle="--", linewidth=1.5,
+                     label=f"Mean: {mean_tp:.2f} +/- {ci95_tp:.2f}")
+        ax1.fill_between([-0.5, len(exp_names) - 0.5],
+                         mean_tp - ci95_tp, mean_tp + ci95_tp,
+                         alpha=0.15, color=RED)
+        ax1.set_ylabel("Throughput (sims/min)")
+        ax1.set_title("Real Simulation Throughput\n(per experiment)")
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(exp_names, fontsize=7, rotation=45, ha="right")
+        ax1.legend(fontsize=8)
 
-    # GPU allocation timeline
-    colors_sim = "#64B5F6"
-    colors_ml = "#FF7043"
-    for i in range(7):
-        ax2.barh(i, 60, left=0, height=0.7, color=colors_sim, edgecolor="white")
-        ax2.barh(i, 40, left=60, height=0.7, color=colors_sim, edgecolor="white")
-    ax2.barh(7, 60, left=0, height=0.7, color=colors_ml, edgecolor="white")
-    ax2.barh(7, 40, left=60, height=0.7, color=colors_sim, edgecolor="white")
-    ax2.axvline(x=60, color="red", linestyle="--", linewidth=2, label="Freeze Event")
-    ax2.set_xlabel("Time (arbitrary)")
-    ax2.set_ylabel("GPU")
-    ax2.set_title("GPU Allocation Timeline")
-    ax2.set_yticks(range(8))
-    ax2.set_yticklabels([f"GPU {i}" for i in range(8)], fontsize=8)
-    ax2.legend(fontsize=8)
-    ax2.annotate("ML Training", xy=(30, 7.3), ha="center", fontsize=8,
-                 color="white", fontweight="bold")
-    ax2.annotate("Simulations", xy=(80, 7.3), ha="center", fontsize=8,
-                 color="white", fontweight="bold")
-    ax2.annotate("+14.3%\nthroughput", xy=(80, -0.8), ha="center", fontsize=9,
-                 color=GREEN, fontweight="bold")
+    # Right: analytical model
+    ana = data["analytical"]
+    categories = [f"Before\n({ana['sim_gpus_before']} GPUs)",
+                  f"After\n({ana['sim_gpus_after']} GPUs)"]
+    values = [ana["throughput_before_spm"], ana["throughput_after_spm"]]
+    colors = [GRAY, GREEN]
+    bars = ax2.bar([0, 1], values, 0.5, color=colors, edgecolor="white")
+    imp = ana["improvement_pct"]
+    ax2.annotate(f"+{imp:.1f}%", xy=(1, values[1]),
+                 xytext=(0, 5), textcoords="offset points",
+                 ha="center", fontsize=10, color=GREEN_DARK, fontweight="bold")
+    ax2.set_ylabel("Throughput (sims/min)")
+    ax2.set_title(f"Analytical: GPU Reclaim Impact\n(real sim duration: {ana['real_sim_time_s']:.0f}s)")
+    ax2.set_xticks([0, 1])
+    ax2.set_xticklabels(categories)
+    ax2.set_ylim(0, max(values) * 1.3)
 
     fig.tight_layout()
     savefig(fig, "fig_study3b_throughput")
@@ -151,9 +149,9 @@ def plot_cooldown():
     expiry_test = tests[2]
     actions = [r["action"].replace("_", "\n") for r in expiry_test["results"]]
     success = [r["success"] for r in expiry_test["results"]]
-    colors = [GREEN if s else RED for s in success]
+    colors_bar = [GREEN if s else RED for s in success]
     x2 = np.arange(len(actions))
-    ax2.bar(x2, [1]*len(actions), 0.6, color=colors, edgecolor="white")
+    ax2.bar(x2, [1]*len(actions), 0.6, color=colors_bar, edgecolor="white")
     for i, s in enumerate(success):
         label = "OK" if s else "Blocked"
         ax2.annotate(label, xy=(i, 0.5), ha="center", va="center",
@@ -171,6 +169,9 @@ def plot_cooldown():
 if __name__ == "__main__":
     print("=== Study 3 Figures ===")
     plot_reallocation()
+    print("  fig_study3a_reallocation done")
     plot_throughput()
+    print("  fig_study3b_throughput done")
     plot_cooldown()
+    print("  fig_study3c_cooldown done")
     print("Done.")

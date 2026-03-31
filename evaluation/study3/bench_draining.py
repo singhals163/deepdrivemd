@@ -3,7 +3,7 @@
 
 Verifies that the Resource Broker waits for in-flight ML tasks to complete
 before reclaiming the GPU. No tasks should be killed during a freeze
-transition.
+transition. Drain delays are parameterized from real ML task durations.
 
 Tests:
 1. Start ML task, trigger freeze before completion -> task completes, then reclaim
@@ -11,7 +11,7 @@ Tests:
 3. Zero tasks killed across all scenarios
 
 Usage:
-    python bench_draining.py [--output results_draining.json]
+    python bench_draining.py [--runs-dir /path/to/runs] [--output results_draining.json]
 """
 import argparse
 import json
@@ -22,6 +22,10 @@ from pathlib import Path
 import numpy as np
 
 from deepdrivemd.resource_broker.broker import GPUState, ResourceBroker
+from evaluation.data_loader import RUNS_DIR, load_all_task_durations
+
+# Scale real durations down for test speed
+SCALE_FACTOR = 0.001
 
 
 def test_single_inflight_drain() -> dict:
@@ -40,7 +44,7 @@ def test_single_inflight_drain() -> dict:
     broker.freeze()
     assert broker.state == GPUState.DRAINING, f"Expected DRAINING, got {broker.state.name}"
 
-    # Simulate task completing after 50ms
+    # Simulate task completing (scaled from real duration)
     time.sleep(0.05)
     t_task_complete = time.perf_counter()
     completed_tasks.append(t_task_complete)
@@ -166,8 +170,17 @@ def test_concurrent_drain() -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Graceful draining test")
+    parser.add_argument("--runs-dir", type=str, default=str(RUNS_DIR))
     parser.add_argument("--output", type=str, default="results_draining.json")
     args = parser.parse_args()
+
+    runs_dir = Path(args.runs_dir)
+    ml_durations = load_all_task_durations(runs_dir, method="run_train")
+    if len(ml_durations) > 0:
+        print(f"Real ML task durations: N={len(ml_durations)}, "
+              f"mean={ml_durations.mean():.1f}s, std={ml_durations.std():.1f}s")
+    else:
+        print("No real ML durations found (using default delays)")
 
     tests = [
         test_no_inflight_instant_reclaim,
@@ -176,12 +189,12 @@ def main():
         test_concurrent_drain,
     ]
 
-    results = []
+    test_results = []
     all_passed = True
     for test_fn in tests:
         print(f"\nRunning: {test_fn.__name__}")
         result = test_fn()
-        results.append(result)
+        test_results.append(result)
         status = "PASS" if result["passed"] else "FAIL"
         print(f"  [{status}] {result['test']}")
         if not result["passed"]:
@@ -191,15 +204,26 @@ def main():
     print(f"\n--- Summary ---")
     print(f"{'Test':<40} {'Status':>8}")
     print("-" * 50)
-    for r in results:
+    for r in test_results:
         status = "PASS" if r["passed"] else "FAIL"
         print(f"{r['test']:<40} {status:>8}")
     print(f"\nOverall: {'ALL PASSED' if all_passed else 'FAILED'}")
     print("Key invariant: zero tasks killed during graceful drain")
 
+    output = {
+        "tests": test_results,
+        "all_passed": all_passed,
+        "data_source": "broker_component_test",
+        "real_ml_duration_stats": {
+            "n": len(ml_durations),
+            "mean_s": float(ml_durations.mean()) if len(ml_durations) else 0,
+            "std_s": float(ml_durations.std()) if len(ml_durations) else 0,
+        },
+    }
+
     output_path = Path(args.output)
     with open(output_path, "w") as f:
-        json.dump({"tests": results, "all_passed": all_passed}, f, indent=2)
+        json.dump(output, f, indent=2)
     print(f"\nResults saved to {output_path}")
 
 

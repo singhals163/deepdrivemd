@@ -1,0 +1,230 @@
+{
+  "data_source": "real_checkpoints",
+  "n_checkpoints_tested": 37,
+  "all_bit_identical": true,
+  "max_diff_across_all": 0.0,
+  "trials": [
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015220-9821f611-a91a-4af2-af8a-75d27e123411/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015321-9f638c0e-2bb1-426c-bd15-a9dbb247deb5/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015421-6330c069-1dd5-4ad5-a0b4-7031c9a06734/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015523-ac115bc0-26ae-448c-87da-10ccf9677353/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015624-a7ae8df1-0389-4f69-b4fb-4388b7557702/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015725-cc55121f-b953-4ed7-893d-f4e156ce2a30/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015736-838c3ffe-1c1b-439d-8b14-d81a6122291e/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015839-9fbde264-161c-4434-a1c9-a6e1c33364ab/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-015941-56a164e6-5101-4c4f-8181-4c5ea3b6b0e6/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020042-f443c8b2-45f2-4648-b2fe-7a9aa6b4344c/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020141-f1e3d434-867e-4ecb-bed8-4bb760da1c9d/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020242-7d87608e-b3f5-4cc6-80a6-de4b5afb863c/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020343-d47b0fcb-2410-4ee5-80f7-c25ae87b0405/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020503-cf885531-b331-4c55-b71a-bfd02a4d541a/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-015111/train/run-310326-020601-8c4f5238-6023-45da-b475-a61f9da54156/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-024932-c7c63004-6f2b-464a-a158-0261ad393fad/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025032-0b2c82dd-9fe6-479b-a9a6-8a76b6979963/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025131-c5ee7009-d869-4b8d-919a-f82aad7353ce/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025232-03cdc057-3cd6-4eec-882d-b188ea322089/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025332-ea70d895-d250-4eaf-9063-0a0c3eebb56f/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025433-99186428-c403-460e-9262-b335bc79ad42/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025508-68e5f767-f505-481e-acbb-e8b1aeb7f646/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025555-b7661607-97ee-41a4-8aee-43089717849d/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025655-1a2ca3f0-c9ab-497f-a498-4f58d2c26250/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025744-5793a7e6-ef42-45f7-bf8c-05aee939d025/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025841-4b7d3451-0c50-4885-8c13-0b984c62df23/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-025942-d14500c1-7ad0-47d0-8530-bb8fafd57b9e/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-030039-c0015a13-39ca-4c91-b273-2e94b27d75aa/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-030140-33f2966f-4edb-4244-80cc-c410e89d001d/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-024822/train/run-310326-030241-5fdb559b-9d0e-427a-a971-b2cd0ad71085/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 821591
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-033047/train/run-310326-033149-dd3b64dd-e479-43ec-b41d-ec819a6b8e3a/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 20617511
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-033047/train/run-310326-033245-c3f2179b-3806-4b2a-aab4-6b0a67bb1863/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 20617511
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-173722/train/run-310326-173824-639fb448-d665-4cde-896e-b59d503e7d7e/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 20617511
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-173722/train/run-310326-173919-11d6473e-1fc6-42a2-b4cf-3d9422661f91/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 20617511
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-205255/train/run-310326-205408-aa848fa2-bd88-4c2b-8303-56c05c52da81/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 1660439
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-205255/train/run-310326-205511-f7759ba2-4027-44a0-91dd-1a6ace3728fd/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 1660439
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "checkpoint": "/shivam/deepdrivemd/runs/experiment-310326-205255/train/run-310326-205614-b9801aee-c996-46ba-9cfb-c572ff6b3257/model/checkpoints/checkpoint-epoch-20.pt",
+      "n_params": 1660439
+    }
+  ]
+}

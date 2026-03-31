@@ -1,0 +1,74 @@
+{
+  "real_data": {
+    "experiments": [
+      {
+        "experiment": "experiment-310326-015111",
+        "total_tasks": 98,
+        "wall_clock_s": 899.0602288246155,
+        "wall_clock_min": 14.984337147076925,
+        "throughput_sims_per_min": 6.540162506895902,
+        "mean_task_duration_s": 63.18734370698031
+      },
+      {
+        "experiment": "experiment-310326-024822",
+        "total_tasks": 95,
+        "wall_clock_s": 898.9653840065002,
+        "wall_clock_min": 14.982756400108338,
+        "throughput_sims_per_min": 6.340622343650536,
+        "mean_task_duration_s": 63.67519989587661
+      },
+      {
+        "experiment": "experiment-310326-033047",
+        "total_tasks": 105,
+        "wall_clock_s": 883.1465590000153,
+        "wall_clock_min": 14.719109316666922,
+        "throughput_sims_per_min": 7.133583815503369,
+        "mean_task_duration_s": 58.39048390939743
+      },
+      {
+        "experiment": "experiment-310326-173722",
+        "total_tasks": 107,
+        "wall_clock_s": 894.6558861732483,
+        "wall_clock_min": 14.910931436220805,
+        "throughput_sims_per_min": 7.175943398148928,
+        "mean_task_duration_s": 56.674054718456695
+      },
+      {
+        "experiment": "experiment-310326-205255",
+        "total_tasks": 35,
+        "wall_clock_s": 339.0697820186615,
+        "wall_clock_min": 5.651163033644358,
+        "throughput_sims_per_min": 6.193415371601653,
+        "mean_task_duration_s": 66.49660974553387
+      }
+    ],
+    "throughput": {
+      "mean_spm": 6.676745487160078,
+      "std_spm": 0.4057441290482032,
+      "median_spm": 6.540162506895902,
+      "p99_spm": 7.174249014843106,
+      "min_spm": 6.193415371601653,
+      "max_spm": 7.175943398148928,
+      "ci95_spm": 0.3556504099771059,
+      "n": 5,
+      "raw_spm": [
+        6.540162506895902,
+        6.340622343650536,
+        7.133583815503369,
+        7.175943398148928,
+        6.193415371601653
+      ]
+    }
+  },
+  "analytical": {
+    "sim_gpus_before": 7,
+    "sim_gpus_after": 8,
+    "real_sim_time_s": 60.82729472692643,
+    "n_sim_measurements": 440,
+    "throughput_before_spm": 6.893462148326498,
+    "throughput_after_spm": 7.878242455230283,
+    "improvement_pct": 14.285714285714276,
+    "expected_improvement_pct": 14.285714285714285
+  },
+  "data_source": "real_colmena_runs"
+}

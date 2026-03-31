@@ -1,0 +1,26 @@
+{
+  "data_source": "synthetic",
+  "n_models_tested": 3,
+  "all_bit_identical": true,
+  "max_diff_across_all": 0.0,
+  "trials": [
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "model_name": "BBA-scale (~200K)",
+      "n_params": 200344
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "model_name": "CLN025-scale (~2M)",
+      "n_params": 2002000
+    },
+    {
+      "max_diff": 0.0,
+      "bit_identical": true,
+      "model_name": "KRAS-scale (~66M)",
+      "n_params": 65998560
+    }
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "data_source": "real_training_loss",
+  "n_trials": 5,
+  "n_loss_curves": 35,
+  "config": {
+    "n_threads": 50,
+    "signals_per_thread": 100,
+    "total_signals": 5000
+  },
+  "throughput": {
+    "mean_sps": 104589.05065029932,
+    "std_sps": 2637.593930924138,
+    "median_sps": 103939.65400207718,
+    "p99_sps": 107534.57116684233,
+    "min_sps": 100404.92870344844,
+    "max_sps": 107543.85757040455,
+    "ci95_sps": 2311.953016022205,
+    "n": 5,
+    "raw_sps": [
+      100404.92870344844,
+      103745.1154942174,
+      103939.65400207718,
+      107543.85757040455,
+      107311.69748134905
+    ]
+  },
+  "all_trials_passed": true,
+  "checks": {
+    "zero_dropped_signals": true,
+    "zero_errors": true,
+    "no_self_transitions": true,
+    "consistent_state_chain": true
+  },
+  "trials": [
+    {
+      "n_threads": 50,
+      "signals_per_thread": 100,
+      "total_signals_expected": 5000,
+      "total_signals_received": 5000,
+      "transitions_issued": 0,
+      "elapsed_sec": 0.04979835217818618,
+      "signals_per_sec": 100404.92870344844,
+      "errors": [],
+      "checks": {
+        "zero_dropped_signals": true,
+        "zero_errors": true,
+        "no_self_transitions": true,
+        "consistent_state_chain": true
+      },
+      "all_passed": true,
+      "data_source": "real_training_loss"
+    },
+    {
+      "n_threads": 50,
+      "signals_per_thread": 100,
+      "total_signals_expected": 5000,
+      "total_signals_received": 5000,
+      "transitions_issued": 0,
+      "elapsed_sec": 0.04819504008628428,
+      "signals_per_sec": 103745.1154942174,
+      "errors": [],
+      "checks": {
+        "zero_dropped_signals": true,
+        "zero_errors": true,
+        "no_self_transitions": true,
+        "consistent_state_chain": true
+      },
+      "all_passed": true,
+      "data_source": "real_training_loss"
+    },
+    {
+      "n_threads": 50,
+      "signals_per_thread": 100,
+      "total_signals_expected": 5000,
+      "total_signals_received": 5000,
+      "transitions_issued": 0,
+      "elapsed_sec": 0.04810483590699732,
+      "signals_per_sec": 103939.65400207718,
+      "errors": [],
+      "checks": {
+        "zero_dropped_signals": true,
+        "zero_errors": true,
+        "no_self_transitions": true,
+        "consistent_state_chain": true
+      },
+      "all_passed": true,
+      "data_source": "real_training_loss"
+    },
+    {
+      "n_threads": 50,
+      "signals_per_thread": 100,
+      "total_signals_expected": 5000,
+      "total_signals_received": 5000,
+      "transitions_issued": 0,
+      "elapsed_sec": 0.04649265995249152,
+      "signals_per_sec": 107543.85757040455,
+      "errors": [],
+      "checks": {
+        "zero_dropped_signals": true,
+        "zero_errors": true,
+        "no_self_transitions": true,
+        "consistent_state_chain": true
+      },
+      "all_passed": true,
+      "data_source": "real_training_loss"
+    },
+    {
+      "n_threads": 50,
+      "signals_per_thread": 100,
+      "total_signals_expected": 5000,
+      "total_signals_received": 5000,
+      "transitions_issued": 0,
+      "elapsed_sec": 0.04659324302338064,
+      "signals_per_sec": 107311.69748134905,
+      "errors": [],
+      "checks": {
+        "zero_dropped_signals": true,
+        "zero_errors": true,
+        "no_self_transitions": true,
+        "consistent_state_chain": true
+      },
+      "all_passed": true,
+      "data_source": "real_training_loss"
+    }
+  ]
+}

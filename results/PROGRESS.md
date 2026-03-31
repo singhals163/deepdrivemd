@@ -267,3 +267,86 @@ vi evaluation/plot_study1.py   # then: make fig-study1
    applications")
 3. **Write evaluation.tex** — map Studies 1-4 to subsections validating each
    component and the integrated comparison
+
+---
+
+## Implementation Gaps (identified 2026-03-31)
+
+Fixes needed in `deepdrivemd/workflows/openmm_cvae_dynamic.py` before
+next campaign run. Do NOT apply while an experiment is running.
+
+### 1. Signal Monitor is deaf during freeze (CRITICAL)
+
+**Problem:** `submit_telemetry()` is only called in `handle_train_output()`.
+During freeze, training is stopped, so no telemetry is submitted. The Signal
+Monitor can never detect a distribution shift and trigger RESUME — the
+resume path is dead code.
+
+**Fix:** In `handle_simulation_output()`, when `self.model_frozen is True`,
+submit a simulation-only telemetry vector to the Signal Monitor using
+the RMSD and inference_stability signals already being tracked:
+
+```python
+if self.model_frozen and len(self._recent_rmsds) >= 5:
+    mean_rmsd = float(np.mean(self._recent_rmsds[-10:]))
+    metrics = np.array([1.0, mean_rmsd, self._inference_stability])
+    state = self.signal_monitor.submit_telemetry(metrics)
+```
+
+The `CompositePolicy` already handles RESUME detection via
+`_is_rmsd_degrading()` — it just never gets the data to evaluate.
+
+### 2. Inference runs during freeze, competing for reclaimed GPU
+
+**Problem:** `handle_simulation_output()` sets `self.run_inference.set()`
+regardless of `model_frozen`. Inference tasks call
+`resource_broker.register_ml_task_start()` and go to the ML executor,
+competing with `simulate_on_ml()` for the "reclaimed" GPU.
+
+**Fix:** Gate inference the same way training is gated:
+
+```python
+if not self.model_frozen and num_sims and (num_sims % self.simulations_per_inference == 0):
+    self.run_inference.set()
+```
+
+**Rationale:** If the model has converged, inference results won't
+meaningfully change. The latent space is static, so outlier selections
+are stable. This also ensures the reclaimed GPU is 100% available for
+simulations, matching the 14.3% throughput claim.
+
+### 3. Training trigger should come from Signal Monitor (ENHANCEMENT)
+
+**Problem:** Training starts after a fixed counter (`simulations_per_train = 6`).
+This is arbitrary. The Signal Monitor should also control when training
+initially starts, using the same data novelty signal that triggers RESUME.
+
+**Current:** Fixed counter triggers training start; Signal Monitor only
+handles freeze.
+
+**Desired:** Signal Monitor is the central control plane for the entire
+AI lifecycle — start, stop, and restart all driven by telemetry signals.
+The `simulations_per_train` counter becomes a minimum batch size, not
+a trigger.
+
+**Status:** Enhancement for future work. Current approach (fixed trigger
+to start, Signal Monitor to stop) is defensible for the paper.
+
+### 4. Signal Monitor design — multi-dimensional control plane
+
+The Signal Monitor should consume signals from three sources:
+- **Simulation:** RMSD distributions, contact map novelty, conformational
+  coverage — tells you "there's new data worth learning from"
+- **AI component:** training loss, validation loss, inference stability —
+  tells you "the model has/hasn't absorbed the data"
+- **System:** GPU utilization, memory pressure, queue depth — tells you
+  "resources are available/constrained"
+
+The policy evaluates all dimensions and decides:
+- Data novelty high + model not training → **start/resume training**
+- Training loss converged + model training → **freeze** (stop training + inference)
+- Data novelty low + model frozen → **stay frozen**, keep simulating
+
+The `CompositePolicy` already implements freeze + resume logic on
+`[normalized_loss, mean_rmsd, inference_stability]`. The gap is that
+the workflow doesn't feed simulation telemetry during freeze (gap #1).
