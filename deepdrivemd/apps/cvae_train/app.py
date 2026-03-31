@@ -51,7 +51,13 @@ class CVAETrainApplication(Application):
             self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
         )
 
-        output_data = CVAETrainOutput(model_weight_path=model_weight_path)
+        # Extract final training loss for signal monitor telemetry
+        final_loss = float(trainer.loss_curve_["train_loss"][-1]) if trainer.loss_curve_ else 0.0
+
+        output_data = CVAETrainOutput(
+            model_weight_path=model_weight_path,
+            final_loss=final_loss,
+        )
         # Log the output data
         output_data.dump_yaml(self.workdir / "output.yaml")
         self.backup_node_local()

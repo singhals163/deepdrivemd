@@ -16,6 +16,7 @@ class CVAETrainInput(BatchSettings):
 
 class CVAETrainOutput(BaseSettings):
     model_weight_path: Path
+    final_loss: float = 0.0
 
 
 class CVAESettings(BaseSettings):

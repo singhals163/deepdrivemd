@@ -1,6 +1,6 @@
 """Utilities to build Parsl configurations."""
 from abc import ABC, abstractmethod
-from typing import Literal, Sequence, Tuple, Union
+from typing import Literal, Optional, Sequence, Tuple, Union
 
 from parsl.addresses import address_by_interface
 from parsl.config import Config
@@ -67,8 +67,44 @@ class WorkstationSettings(BaseComputeSettings):
     """Port range."""
     retries: int = 1
     label: str = "htex"
+    ml_accelerators: Optional[Sequence[str]] = None
+    """GPU IDs dedicated to ML tasks (training/inference). When set, creates
+    separate executors for simulation and ML to pin ML tasks to specific GPUs."""
 
     def config_factory(self, run_dir: PathLike) -> Config:
+        if self.ml_accelerators is not None:
+            # Dual-executor mode: separate sim and ML GPUs
+            all_accels = self.available_accelerators
+            if isinstance(all_accels, int):
+                all_accels = [str(i) for i in range(all_accels)]
+            ml_set = set(self.ml_accelerators)
+            sim_accels = [a for a in all_accels if a not in ml_set]
+            return Config(
+                run_dir=str(run_dir),
+                retries=self.retries,
+                executors=[
+                    HighThroughputExecutor(
+                        address="localhost",
+                        label="htex_sim",
+                        cpu_affinity="block",
+                        available_accelerators=sim_accels,
+                        worker_port_range=self.worker_port_range,
+                        provider=LocalProvider(init_blocks=1, max_blocks=1),
+                    ),
+                    HighThroughputExecutor(
+                        address="localhost",
+                        label="htex_ml",
+                        cpu_affinity="block",
+                        available_accelerators=list(self.ml_accelerators),
+                        worker_port_range=(
+                            self.worker_port_range[0] + 10000,
+                            self.worker_port_range[1] + 10000,
+                        ),
+                        provider=LocalProvider(init_blocks=1, max_blocks=1),
+                    ),
+                ],
+            )
+
         return Config(
             run_dir=str(run_dir),
             retries=self.retries,
@@ -79,7 +115,7 @@ class WorkstationSettings(BaseComputeSettings):
                     cpu_affinity="block",
                     available_accelerators=self.available_accelerators,
                     worker_port_range=self.worker_port_range,
-                    provider=LocalProvider(init_blocks=1, max_blocks=1),  # type: ignore[no-untyped-call]
+                    provider=LocalProvider(init_blocks=1, max_blocks=1),
                 ),
             ],
         )
