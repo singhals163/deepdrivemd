@@ -30,23 +30,11 @@ class CVAETrainApplication(Application):
             )
             trainer.model.load_state_dict(checkpoint["model_state_dict"])
 
-        # Load data — handle mixed sparse/dense contact map formats
-        # Some simulations produce object arrays (index-based sparse) while
-        # others produce dense (N_frames, N_features) arrays. Only keep dense.
-        raw_maps = [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
-        raw_rmsds = [np.load(p) for p in input_data.rmsd_paths]
-        # Filter: only keep entries where contact maps are dense (ndim >= 2)
-        dense_pairs = [
-            (cm, rm) for cm, rm in zip(raw_maps, raw_rmsds)
-            if cm.dtype != object and cm.ndim >= 2
-        ]
-        if not dense_pairs:
-            raise ValueError(
-                f"No dense contact maps found among {len(raw_maps)} files. "
-                "Training requires at least some dense contact map data."
-            )
-        contact_maps = np.concatenate([p[0] for p in dense_pairs])
-        rmsds = np.concatenate([p[1] for p in dense_pairs])
+        # Load data
+        contact_maps = np.concatenate(
+            [np.load(p, allow_pickle=True) for p in input_data.contact_map_paths]
+        )
+        rmsds = np.concatenate([np.load(p) for p in input_data.rmsd_paths])
 
         # Train model
         model_dir = self.workdir / "model"  # Need to create new directory
