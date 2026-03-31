@@ -10,6 +10,7 @@ from deepdrivemd.signal_monitor.policy import (
     Policy,
     ThresholdPolicy,
     SlidingWindowPolicy,
+    CompositePolicy,
     MannKendallPolicy,
     WorkflowState,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "Policy",
     "ThresholdPolicy",
     "SlidingWindowPolicy",
+    "CompositePolicy",
     "MannKendallPolicy",
     "SignalMonitor",
     "WorkflowState",

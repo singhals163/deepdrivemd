@@ -1,7 +1,5 @@
-# Study 4: Dynamic BBA campaign (signal-driven freeze, GPU 7 pinned for ML)
-# Short validation run: 50 sims, 1ns each, 30 min timeout
-
-simulation_input_dir: data/1fme
+# Study 4: CLN025 dynamic (signal-driven freeze, GPU 7 pinned for ML)
+simulation_input_dir: data/cln025
 num_workers: 8
 simulations_per_train: 6
 simulations_per_inference: 1
@@ -18,19 +16,20 @@ simulation_settings:
   simulation_length_ns: 1
   report_interval_ps: 10
   temperature_kelvin: 300
-  rmsd_reference_pdb: data/1fme/1FME-folded.pdb
+  rmsd_reference_pdb: data/cln025/ref.pdb
+  mda_selection: "protein and not name H*"
+  cutoff_angstrom: 4.5
 
 train_settings:
-  cvae_settings_yaml: examples/bba-folding-workstation/cvae-prod-settings.yaml
+  cvae_settings_yaml: examples/cln025-folding-workstation/cvae-prod-settings.yaml
 
 inference_settings:
-  cvae_settings_yaml: examples/bba-folding-workstation/cvae-prod-settings.yaml
+  cvae_settings_yaml: examples/cln025-folding-workstation/cvae-prod-settings.yaml
   num_outliers: 100
 
-# Dynamic provisioning settings
 policy_name: composite
 policy_window_size: 5
-policy_loss_threshold: 0.02
+policy_loss_threshold: 0.05
 policy_min_improvement: 0.005
 cooldown_sec: 30.0
 signal_window_size: 20

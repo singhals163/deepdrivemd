@@ -122,6 +122,108 @@ class SlidingWindowPolicy(Policy):
         return WorkflowState.ACTIVE
 
 
+class CompositePolicy(Policy):
+    """Freeze when multiple signals agree that AI is no longer helping.
+
+    Evaluates three independent signals from the telemetry vector:
+      [0] = normalized training loss (relative to first loss observed)
+      [1] = mean simulation RMSD (application quality)
+      [2] = inference stability (0-1, fraction of restart points unchanged)
+
+    Freeze when:
+      - Training loss has plateaued (relative improvement < threshold), AND
+      - RMSD is not improving (no downward trend in recent window), OR
+      - Inference output is stable (>stability_threshold of restarts unchanged)
+
+    Resume when RMSD starts increasing (distribution shift).
+
+    Telemetry vector layout:
+      v = [normalized_loss, mean_rmsd, inference_stability]
+    """
+
+    LOSS_IDX = 0
+    RMSD_IDX = 1
+    STABILITY_IDX = 2
+
+    def __init__(
+        self,
+        window_size: int = 5,
+        loss_plateau_threshold: float = 0.02,
+        rmsd_improvement_threshold: float = 0.1,
+        stability_threshold: float = 0.8,
+    ):
+        self.window_size = window_size
+        self.loss_plateau_threshold = loss_plateau_threshold
+        self.rmsd_improvement_threshold = rmsd_improvement_threshold
+        self.stability_threshold = stability_threshold
+
+    @property
+    def name(self) -> str:
+        return "composite"
+
+    def _has_loss_plateaued(self, losses: np.ndarray) -> bool:
+        """Check if normalized loss has stopped improving."""
+        if len(losses) < 2:
+            return False
+        half = len(losses) // 2
+        first_half = np.mean(losses[:half])
+        second_half = np.mean(losses[half:])
+        if first_half == 0:
+            return True
+        relative_improvement = (first_half - second_half) / abs(first_half)
+        return relative_improvement < self.loss_plateau_threshold
+
+    def _is_rmsd_improving(self, rmsds: np.ndarray) -> bool:
+        """Check if RMSD is trending downward (science improving)."""
+        if len(rmsds) < 2:
+            return True  # Assume improving until we have data
+        half = len(rmsds) // 2
+        first_half = np.mean(rmsds[:half])
+        second_half = np.mean(rmsds[half:])
+        improvement = first_half - second_half
+        return improvement > self.rmsd_improvement_threshold
+
+    def _is_rmsd_degrading(self, rmsds: np.ndarray) -> bool:
+        """Check if RMSD is trending upward (distribution shift)."""
+        if len(rmsds) < 2:
+            return False
+        half = len(rmsds) // 2
+        first_half = np.mean(rmsds[:half])
+        second_half = np.mean(rmsds[half:])
+        degradation = second_half - first_half
+        return degradation > self.rmsd_improvement_threshold
+
+    def _is_inference_stable(self, stabilities: np.ndarray) -> bool:
+        """Check if inference output has stabilized."""
+        if len(stabilities) == 0:
+            return False
+        return np.mean(stabilities[-3:]) > self.stability_threshold
+
+    def evaluate(self, telemetry_window: List[np.ndarray]) -> WorkflowState:
+        if len(telemetry_window) < self.window_size:
+            return WorkflowState.ACTIVE
+
+        window = telemetry_window[-self.window_size:]
+        losses = np.array([float(v[self.LOSS_IDX]) for v in window])
+        rmsds = np.array([float(v[self.RMSD_IDX]) for v in window])
+        stabilities = np.array([float(v[self.STABILITY_IDX]) for v in window])
+
+        loss_plateaued = self._has_loss_plateaued(losses)
+        rmsd_improving = self._is_rmsd_improving(rmsds)
+        rmsd_degrading = self._is_rmsd_degrading(rmsds)
+        inference_stable = self._is_inference_stable(stabilities)
+
+        # RESUME: if RMSD is degrading, the model needs retraining
+        if rmsd_degrading:
+            return WorkflowState.RESUME
+
+        # DORMANT: loss plateaued AND (RMSD not improving OR inference stable)
+        if loss_plateaued and (not rmsd_improving or inference_stable):
+            return WorkflowState.DORMANT
+
+        return WorkflowState.ACTIVE
+
+
 class MannKendallPolicy(Policy):
     """O(Nk^2) — freeze when a Mann-Kendall trend test detects no
     significant downward trend in the loss over the last k vectors.

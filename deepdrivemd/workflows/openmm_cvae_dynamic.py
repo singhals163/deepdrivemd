@@ -123,6 +123,12 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         self.simulation_input_queue: Queue[MDSimulationInput] = Queue()
         self._ml_gpu_sim_active = False
 
+        # Telemetry tracking for composite signal
+        self._first_loss: Optional[float] = None  # For loss normalization
+        self._recent_rmsds: list = []  # Rolling RMSD from simulations
+        self._last_inference_dirs: set = set()  # For inference stability
+        self._inference_stability: float = 0.0  # 0-1, fraction unchanged
+
         # Dynamic provisioning components (all in thinker thread)
         self.signal_monitor = SignalMonitor(
             policy=policy,
@@ -230,6 +236,17 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         self.inference_input.append(output.contact_map_path, output.rmsd_path)
         num_sims = len(self.train_input)
 
+        # Track RMSD for composite signal
+        try:
+            rmsd_data = np.load(output.rmsd_path)
+            mean_rmsd = float(np.mean(rmsd_data))
+            self._recent_rmsds.append(mean_rmsd)
+            # Keep only last 50
+            if len(self._recent_rmsds) > 50:
+                self._recent_rmsds = self._recent_rmsds[-50:]
+        except Exception:
+            pass
+
         if not self.model_frozen and num_sims and (num_sims % self.simulations_per_train == 0):
             self.run_training.set()
 
@@ -248,17 +265,33 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
             f"model_weight_path: {output.model_weight_path}"
         )
 
-        # Submit telemetry to Signal Monitor
-        final_loss = output.final_loss
-        metrics = np.array([final_loss, float(self.train_count)])
+        # Build composite telemetry vector: [normalized_loss, mean_rmsd, inference_stability]
+        raw_loss = output.final_loss
+        if self._first_loss is None:
+            self._first_loss = raw_loss if raw_loss > 0 else 1.0
+        normalized_loss = raw_loss / self._first_loss
+
+        mean_rmsd = float(np.mean(self._recent_rmsds[-10:])) if self._recent_rmsds else 10.0
+
+        metrics = np.array([normalized_loss, mean_rmsd, self._inference_stability])
         state = self.signal_monitor.submit_telemetry(metrics)
         self.logger.info(
-            f"Signal Monitor: loss={final_loss:.4f}, state={state.name}, "
-            f"window={self.signal_monitor.get_stats()['window_size']}"
+            f"Signal Monitor: norm_loss={normalized_loss:.4f}, "
+            f"rmsd={mean_rmsd:.3f}, inf_stab={self._inference_stability:.3f}, "
+            f"state={state.name}, window={self.signal_monitor.get_stats()['window_size']}"
         )
 
     def handle_inference_output(self, output: CVAEInferenceOutput) -> None:
         self.resource_broker.register_ml_task_complete()
+
+        # Track inference stability: what fraction of restart dirs are the same
+        current_dirs = set(str(d) for d in output.sim_dirs)
+        if self._last_inference_dirs:
+            overlap = len(current_dirs & self._last_inference_dirs)
+            total = max(len(current_dirs), 1)
+            self._inference_stability = overlap / total
+        self._last_inference_dirs = current_dirs
+
         with self.simulation_govenor:
             self.simulation_input_queue.queue.clear()
             for sim_dir, sim_frame in zip(output.sim_dirs, output.sim_frames):
@@ -267,7 +300,7 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
                 )
         self.logger.info(
             f"Processed inference result and added {len(output.sim_dirs)} "
-            "new restart points to the simulation_input_queue."
+            f"new restart points (stability={self._inference_stability:.3f})."
         )
 
     def get_dynamic_stats(self) -> dict:
@@ -303,6 +336,7 @@ class DynamicExperimentSettings(DeepDriveMDSettings):
 def build_policy(cfg: DynamicExperimentSettings) -> Policy:
     """Build a policy instance from config settings."""
     from deepdrivemd.signal_monitor.policy import (
+        CompositePolicy,
         MannKendallPolicy,
         SlidingWindowPolicy,
         ThresholdPolicy,
@@ -318,6 +352,11 @@ def build_policy(cfg: DynamicExperimentSettings) -> Policy:
         )
     elif cfg.policy_name == "mann_kendall":
         return MannKendallPolicy(window_size=cfg.policy_window_size)
+    elif cfg.policy_name == "composite":
+        return CompositePolicy(
+            window_size=cfg.policy_window_size,
+            loss_plateau_threshold=cfg.policy_loss_threshold,
+        )
     else:
         raise ValueError(f"Unknown policy: {cfg.policy_name}")
 

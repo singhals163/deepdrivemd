@@ -1,0 +1,26 @@
+# Study 4: NTL9 baseline (no freeze, 8 GPUs shared)
+simulation_input_dir: data/ntl9
+num_workers: 8
+simulations_per_train: 6
+simulations_per_inference: 1
+num_total_simulations: 200
+duration_sec: 3600
+
+compute_settings:
+  name: workstation
+  available_accelerators: ["0", "1", "2", "3", "4", "5", "6", "7"]
+
+simulation_settings:
+  simulation_length_ns: 1
+  report_interval_ps: 10
+  temperature_kelvin: 300
+  rmsd_reference_pdb: data/ntl9/ntl9_reference.pdb
+  mda_selection: "protein and name CA"
+  cutoff_angstrom: 8.0
+
+train_settings:
+  cvae_settings_yaml: examples/ntl9-folding-workstation/cvae-prod-settings.yaml
+
+inference_settings:
+  cvae_settings_yaml: examples/ntl9-folding-workstation/cvae-prod-settings.yaml
+  num_outliers: 100
