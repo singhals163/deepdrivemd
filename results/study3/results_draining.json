@@ -1,0 +1,67 @@
+{
+  "tests": [
+    {
+      "test": "no_inflight_instant_reclaim",
+      "reclaim_ms": 0.013131881132721901,
+      "final_state": "SIM_RECLAIMED",
+      "passed": true
+    },
+    {
+      "test": "single_inflight_drain",
+      "drain_time_ms": 50.06648716516793,
+      "task_completed_before_reclaim": true,
+      "final_state": "SIM_RECLAIMED",
+      "passed": true
+    },
+    {
+      "test": "multiple_inflight_drain",
+      "n_tasks": 5,
+      "total_drain_ms": 50.28327205218375,
+      "completed_order": [
+        {
+          "task": 0,
+          "time_ms": 10.06221305578947,
+          "state": "DRAINING",
+          "in_flight": 4
+        },
+        {
+          "task": 1,
+          "time_ms": 20.121176028624177,
+          "state": "DRAINING",
+          "in_flight": 3
+        },
+        {
+          "task": 2,
+          "time_ms": 30.181050999090075,
+          "state": "DRAINING",
+          "in_flight": 2
+        },
+        {
+          "task": 3,
+          "time_ms": 40.21765501238406,
+          "state": "DRAINING",
+          "in_flight": 1
+        },
+        {
+          "task": 4,
+          "time_ms": 50.28232606127858,
+          "state": "SIM_RECLAIMED",
+          "in_flight": 0
+        }
+      ],
+      "final_state": "SIM_RECLAIMED",
+      "tasks_killed": 0,
+      "passed": true
+    },
+    {
+      "test": "concurrent_drain",
+      "n_tasks": 10,
+      "total_drain_ms": 47.26843093521893,
+      "final_state": "SIM_RECLAIMED",
+      "in_flight_remaining": 0,
+      "errors": [],
+      "passed": true
+    }
+  ],
+  "all_passed": true
+}
