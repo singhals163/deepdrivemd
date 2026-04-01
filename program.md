@@ -30,6 +30,20 @@ management, checkpointing). Different systems need different policies.
 convergence behavior, and that the dynamic system beats or matches
 baseline on scientific quality while improving system efficiency.
 
+**What "better than baseline" means:**
+- **Scientific quality**: equal or better RMSD / near-native % (the science
+  must not get worse — this is the hard constraint)
+- **System efficiency**: fewer wasted training GPU-hours, more simulations
+  completed in the same wall-clock time, or both
+
+A successful result is: same science + less training waste. Or: better
+science (because reclaimed GPU runs more sims). Either wins.
+
+**Document what signals were useful.** For each system, record which signals
+the policy used and which ones drove the correct decision. This is a key
+finding for the paper — showing that different systems need different signals
+validates the pluggable architecture design.
+
 ### Why KRAS matters most
 
 KRAS G12D converges fast. The paper shows freeze@5 gives 89.9% near-native
@@ -208,13 +222,18 @@ Log each experiment to `results.tsv` (tab-separated):
 commit	system	base_rmsd	dyn_rmsd	base_nn5	dyn_nn5	base_trains	dyn_trains	base_infers	dyn_infers	status	description
 ```
 
-Status: `improved` (dynamic beats baseline), `neutral` (similar), `regressed`
-(baseline better), `crash` (dynamic failed).
+Status: `improved` (dynamic beats baseline on science AND efficiency),
+`neutral` (similar), `regressed` (baseline better), `crash` (dynamic failed).
+
+In the description, always note **which signals drove the decision** and
+whether a freeze event occurred. This builds the evidence for the paper
+about which signals matter for which systems.
 
 Example:
 ```
-a1b2c3d	bba	5.985	5.606	31.7	38.3	14	15	53	65	improved	composite policy with 3 signals
-b2c3d4e	cln025	5.679	6.063	20.9	10.6	12	12	47	34	regressed	inference bottleneck on ML GPU
+a1b2c3d	bba	5.985	5.606	31.7	38.3	14	15	53	65	improved	composite(loss+rmsd+stab); no freeze; more inferences helped
+b2c3d4e	cln025	5.679	6.063	20.9	10.6	12	12	47	34	regressed	composite; no freeze; inference bottleneck on single ML GPU
+c3d4e5f	kras	8.200	7.100	15.0	22.0	12	5	30	45	improved	composite; FREEZE@5 triggered by loss plateau; GPU7 reclaimed; +15 sims
 ```
 
 ## The experiment loop
@@ -242,6 +261,45 @@ LOOP FOREVER:
    - If dynamic beats baseline → keep the commit
    - If worse or neutral with added complexity → `git reset --hard HEAD~1`
 9. **Repeat** with the next hypothesis.
+
+## Available signals
+
+The system produces signals from three layers. A key part of this research
+is figuring out **which signals matter for which systems** and whether
+different systems need different signal combinations.
+
+### ML Model signals (from `cvae_train/app.py`)
+- **Training loss** (`trainer.loss_curve_["train_loss"]`) — currently used (normalized)
+- **Validation loss** (`trainer.loss_curve_["valid_loss"]`) — NOT used, could detect overfitting
+- **Reconstruction loss** (`trainer.loss_curve_["train_recon_loss"]`) — NOT used
+- **KL divergence** (`trainer.loss_curve_["train_kld_loss"]`) — NOT used, measures latent space quality
+- **Loss curve slope** — NOT computed, could detect plateau more robustly than half-window comparison
+
+### Application/science signals (from simulation + inference)
+- **Simulation RMSD** (`rmsd.npy` per sim) — currently used (rolling mean of last 10)
+- **RMSD variance** — NOT used, high variance = still exploring, low = converged
+- **RMSD trend slope** — NOT used, linear regression over recent sims
+- **Near-native fraction** — NOT used at runtime, could track % of frames < threshold
+- **LOF outlier scores** (`clf.negative_outlier_factor_`) — NOT used, available in inference app
+- **Latent embedding spread** (`embeddings.npy`) — NOT used, variance of CVAE embeddings
+  indicates how well the model distinguishes conformations
+
+### System/infrastructure signals
+- **Inference stability** (restart point overlap) — currently used
+- **Simulation throughput** (sims completed per minute) — NOT tracked
+- **Training time per cycle** — NOT tracked, increasing time = growing dataset overhead
+- **GPU utilization** — NOT tracked, could detect idle GPUs
+- **Queue depth** (pending tasks per executor) — available from Parsl but NOT tracked
+
+### Signal hypotheses per system
+- **KRAS**: loss plateau alone should be sufficient (converges fast, clear plateau)
+- **BBA**: RMSD trend is critical (loss plateaus but quality still improving)
+- **CLN025**: inference stability + throughput matter most (frequent steering needed)
+- **NTL9**: RMSD variance may help (fluctuating quality = keep training)
+
+Part of the experiment loop is testing these hypotheses — try different
+signal combinations and see which ones produce correct freeze/continue
+decisions for each system.
 
 ## Ideas to try (ordered by expected impact)
 
