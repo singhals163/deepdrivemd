@@ -291,15 +291,9 @@ different systems need different signal combinations.
 - **GPU utilization** — NOT tracked, could detect idle GPUs
 - **Queue depth** (pending tasks per executor) — available from Parsl but NOT tracked
 
-### Signal hypotheses per system
-- **KRAS**: loss plateau alone should be sufficient (converges fast, clear plateau)
-- **BBA**: RMSD trend is critical (loss plateaus but quality still improving)
-- **CLN025**: inference stability + throughput matter most (frequent steering needed)
-- **NTL9**: RMSD variance may help (fluctuating quality = keep training)
-
-Part of the experiment loop is testing these hypotheses — try different
-signal combinations and see which ones produce correct freeze/continue
-decisions for each system.
+Part of the experiment loop is discovering which signals matter for which
+systems — try different signal combinations and see which ones produce
+correct freeze/continue decisions.
 
 ## Ideas to try (ordered by expected impact)
 
