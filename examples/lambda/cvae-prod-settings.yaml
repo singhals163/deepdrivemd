@@ -1,0 +1,22 @@
+# CVAE parameters for lambda repressor (80 CA residues, padded to 80x80)
+input_shape: [1, 80, 80]
+filters: [16, 16, 16, 16]
+kernels: [3, 3, 3, 3]
+strides: [1, 1, 2, 2]
+affine_widths: [128]
+affine_dropouts: [0.5]
+latent_dim: 3
+lambda_rec: 1.0
+num_data_workers: 4
+prefetch_factor: 2
+batch_size: 64
+device: cuda
+optimizer_name: RMSprop
+optimizer_hparams:
+    lr: 0.001
+    weight_decay: 0.00001
+epochs: 20
+checkpoint_log_every: 20
+plot_log_every: 20
+plot_n_samples: 5000
+plot_method: raw
