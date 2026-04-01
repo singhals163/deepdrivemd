@@ -267,28 +267,40 @@ The system produces signals from three layers. A key part of this research
 is figuring out **which signals matter for which systems** and whether
 different systems need different signal combinations.
 
+### System signals
+- **Training-to-simulation time ratio (staleness %)** — NOT tracked. Fraction of
+  wall-clock time the model is stale (training in progress while sims run with
+  old model). Key metric from the paper's AI Tax characterization.
+- **Training cost factor (%)** — NOT tracked. Fraction of total GPU-hours consumed
+  by training vs simulation. Indicates how much of the compute budget is "taxed."
+- **Data movement costs (bytes)** — NOT tracked. Volume of data transferred between
+  simulation, training, and inference stages. May conflict with data novelty.
+- **Simulation throughput** (sims completed per minute) — NOT tracked
+- **Inference stability** (restart point overlap) — currently used
+- **Training time per cycle** — NOT tracked, increasing time = growing dataset overhead
+- **GPU utilization** — NOT tracked, could detect idle GPUs
+- **Queue depth** (pending tasks per executor) — available from Parsl but NOT tracked
+
 ### ML Model signals (from `cvae_train/app.py`)
 - **Training loss** (`trainer.loss_curve_["train_loss"]`) — currently used (normalized)
 - **Validation loss** (`trainer.loss_curve_["valid_loss"]`) — NOT used, could detect overfitting
+- **Test loss** — NOT available (no held-out test set during online training)
 - **Reconstruction loss** (`trainer.loss_curve_["train_recon_loss"]`) — NOT used
 - **KL divergence** (`trainer.loss_curve_["train_kld_loss"]`) — NOT used, measures latent space quality
 - **Loss curve slope** — NOT computed, could detect plateau more robustly than half-window comparison
 
-### Application/science signals (from simulation + inference)
+### Application signals (from simulation + inference)
 - **Simulation RMSD** (`rmsd.npy` per sim) — currently used (rolling mean of last 10)
+- **Near-native fraction (%)** — NOT used at runtime, could track % of frames < threshold
+  in a rolling window. Direct measure of scientific quality.
+- **Data novelty fraction (%)** — NOT tracked. Fraction of new simulation frames that
+  explore regions not seen before (e.g., new CVAE latent space clusters). If novelty
+  is low, training on redundant data is wasteful.
 - **RMSD variance** — NOT used, high variance = still exploring, low = converged
 - **RMSD trend slope** — NOT used, linear regression over recent sims
-- **Near-native fraction** — NOT used at runtime, could track % of frames < threshold
 - **LOF outlier scores** (`clf.negative_outlier_factor_`) — NOT used, available in inference app
 - **Latent embedding spread** (`embeddings.npy`) — NOT used, variance of CVAE embeddings
   indicates how well the model distinguishes conformations
-
-### System/infrastructure signals
-- **Inference stability** (restart point overlap) — currently used
-- **Simulation throughput** (sims completed per minute) — NOT tracked
-- **Training time per cycle** — NOT tracked, increasing time = growing dataset overhead
-- **GPU utilization** — NOT tracked, could detect idle GPUs
-- **Queue depth** (pending tasks per executor) — available from Parsl but NOT tracked
 
 Part of the experiment loop is discovering which signals matter for which
 systems — try different signal combinations and see which ones produce
