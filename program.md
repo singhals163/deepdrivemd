@@ -174,10 +174,46 @@ KRAS needs longer timeouts because explicit solvent is slower and it needs
 
 ## Running an experiment
 
+### Pre-run validation
+
+Before every run, verify the environment is clean. Previous runs leave behind
+processes, GPU memory allocations, Redis state, and run directories that **will
+silently corrupt results** if not cleaned up.
+
 ```bash
-# Kill any stale processes
+# 1. Kill ALL stale processes — zombies cause port conflicts and GPU leaks
 pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
 
+# 2. Verify no leftover processes
+ps aux | grep -E "interchange|process_worker|openmm_cvae" | grep -v grep
+# ^ Must return NOTHING. If it does, kill those PIDs manually.
+
+# 3. Check GPU memory is fully released
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+# ^ memory.used should be near 0 on all GPUs. If a GPU still has significant
+#   memory allocated, a zombie process is holding it. Find and kill it:
+#   fuser -v /dev/nvidia* 2>/dev/null
+
+# 4. Flush Redis — stale telemetry from a previous run will pollute the
+#    signal monitor's window and cause incorrect policy decisions
+redis-cli FLUSHALL 2>/dev/null
+
+# 5. Verify the run directory won't collide with a previous run
+ls -td runs/experiment-* | head -3
+# ^ Note the latest run dir. After your run completes, the NEW run dir
+#   must be different (newer timestamp). If it's the same, you're reading
+#   stale results.
+
+# 6. Confirm the correct code is checked out
+git status
+git log --oneline -1
+# ^ Must match the commit you intend to test. Uncommitted changes or
+#   wrong branch = untraceable results.
+```
+
+### Run the experiment
+
+```bash
 # Pick a system: bba, cln025, ntl9, or kras
 SYSTEM=bba
 TIMEOUT=900  # 15 min for BBA/CLN025/NTL9, use 2700 for KRAS
@@ -195,6 +231,93 @@ PYTHONPATH=/shivam/deepdrivemd timeout $TIMEOUT python3 \
 # Clean up after
 pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
 ```
+
+### Post-run sanity checks
+
+After every run, verify the results are valid before logging them. A run that
+"completes" can still produce garbage if the environment was dirty or if
+something silently failed.
+
+```bash
+# 1. Confirm a NEW run directory was created
+DYNAMIC=$(ls -td runs/experiment-* | head -1)
+echo "Run dir: $DYNAMIC"
+# ^ Must be a new directory with a timestamp AFTER you started the run.
+
+# 2. Check that simulations actually ran and produced data
+SIM_COUNT=$(ls -d $DYNAMIC/simulation/*/ 2>/dev/null | wc -l)
+echo "Simulations: $SIM_COUNT"
+# ^ Must be > 0. If 0, the workflow crashed before any sims completed.
+
+# 3. Verify RMSD files exist and are non-empty
+RMSD_COUNT=$(find $DYNAMIC/simulation -name "rmsd.npy" | wc -l)
+echo "RMSD files: $RMSD_COUNT"
+# ^ Should equal SIM_COUNT. Missing rmsd.npy = simulation didn't finish.
+
+# 4. Check training succeeded (not FAIL)
+if [ -f "$DYNAMIC/result/train.json" ]; then
+    TRAIN_OK=$(grep -c '"success": true' $DYNAMIC/result/train.json 2>/dev/null || echo 0)
+    TRAIN_FAIL=$(grep -c '"success": false' $DYNAMIC/result/train.json 2>/dev/null || echo 0)
+    echo "Training: $TRAIN_OK OK, $TRAIN_FAIL FAIL"
+    # ^ FAIL > 0 means training crashed — check the log for errors.
+    #   Common cause: reverted cvae_train/app.py contact map fix.
+else
+    echo "WARNING: No train.json — training never completed"
+fi
+
+# 5. Check inference ran
+if [ -f "$DYNAMIC/result/inference.json" ]; then
+    INFER_COUNT=$(wc -l < $DYNAMIC/result/inference.json)
+    echo "Inference cycles: $INFER_COUNT"
+else
+    echo "WARNING: No inference.json — inference never ran"
+fi
+
+# 6. Sanity-check RMSD values — catch corrupted/stale data
+python3 -c "
+import numpy as np, glob
+files = sorted(glob.glob('$DYNAMIC/simulation/*/rmsd.npy'))
+if not files:
+    print('ERROR: No RMSD files found')
+else:
+    all_rmsd = np.concatenate([np.load(f) for f in files])
+    print(f'RMSD range: [{all_rmsd.min():.3f}, {all_rmsd.max():.3f}]')
+    print(f'RMSD mean: {np.mean(all_rmsd):.3f}')
+    if all_rmsd.max() > 50:
+        print('WARNING: Extremely high RMSD — possible corrupt simulation')
+    if all_rmsd.min() < 0:
+        print('ERROR: Negative RMSD — data is corrupted')
+    if np.isnan(all_rmsd).any():
+        print('ERROR: NaN in RMSD — data is corrupted')
+"
+
+# 7. Check the log for errors/warnings
+echo "=== Last 20 lines of log ==="
+tail -20 /tmp/${SYSTEM}_dynamic.log
+# ^ Look for: tracebacks, OOM errors, GPU errors, "FAIL", "Error"
+grep -ci "error\|traceback\|exception\|oom\|killed" /tmp/${SYSTEM}_dynamic.log
+# ^ Should be 0 or near-0. Investigate any hits.
+
+# 8. Verify metric log files were written (if instrumented)
+if [ -f "results/study4/${SYSTEM}_*_timeseries.tsv" ]; then
+    TS_ROWS=$(wc -l < results/study4/${SYSTEM}_*_timeseries.tsv)
+    echo "Time-series rows: $TS_ROWS"
+fi
+if [ -f "results/study4/${SYSTEM}_*_signals.jsonl" ]; then
+    SIG_ROWS=$(wc -l < results/study4/${SYSTEM}_*_signals.jsonl)
+    echo "Signal audit entries: $SIG_ROWS"
+fi
+```
+
+**If any check fails, do NOT log the results.** Diagnose the issue first.
+Common failure modes:
+- **0 simulations**: workflow crashed at startup — check the full log
+- **Training FAIL**: contact map loader issue — verify `cvae_train/app.py`
+  has the sparse COO fix
+- **Stale run dir**: you're reading a previous run's data — check timestamps
+- **NaN/corrupt RMSD**: GPU memory was dirty from a previous run — flush
+  and rerun
+- **Extremely high RMSD**: wrong system config or simulation diverged
 
 ### Running a baseline (only needed once per system)
 
@@ -435,7 +558,10 @@ LOOP FOREVER:
    and/or the dynamic YAML configs.
 4. **git commit** with a descriptive message.
 5. **Run the experiment** on one system first (BBA is fastest for quick
-   iteration). Extract and compare against saved baseline.
+   iteration). Always run the pre-run validation, then the experiment, then
+   the post-run sanity checks before extracting results. Do not skip the
+   checks — stale processes and dirty GPU state from previous runs silently
+   corrupt results.
 6. **If promising, test on ALL four systems** (BBA, CLN025, NTL9, KRAS).
    A change is only "kept" if it beats or matches baseline on every system.
    Log each system's results to `results.tsv`.
@@ -528,6 +654,20 @@ correct freeze/continue decisions.
 - **Kill ALL stale processes** between runs — interchange and worker zombies
   cause port conflicts and GPU memory leaks. Always run:
   `pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3`
+- **Flush Redis between runs** — stale telemetry from a previous run will
+  pollute the signal monitor's window and cause the policy to make decisions
+  based on a mix of old and new data. Always `redis-cli FLUSHALL` before
+  starting a new dynamic run.
+- **Verify GPU memory is released** — check `nvidia-smi` before each run.
+  If a GPU still has memory allocated from a dead process, that memory won't
+  be available and the run may silently OOM or produce corrupt output.
+- **Confirm the run directory is new** — after a run, always verify the
+  experiment directory timestamp is newer than when you started. Reading
+  results from a stale run directory is the most common source of false
+  "improved" or "regressed" conclusions.
+- **Run post-run sanity checks every time** — see the checklist in "Running
+  an experiment." Never log results to `results.tsv` without verifying the
+  data is valid (sim count > 0, no NaN RMSD, no training FAIL, no tracebacks).
 - **Timeouts**: 15 min for BBA/CLN025/NTL9, 45 min for KRAS.
 - **Redis only for dynamic** — never start Redis for baseline runs.
 - **Commit before running** — so you can revert cleanly if it fails.
