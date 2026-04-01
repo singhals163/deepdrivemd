@@ -12,7 +12,7 @@ compute_settings:
   name: workstation
   available_accelerators: ["0", "1", "2", "3", "4", "5", "6", "7"]
   ml_accelerators: ["7"]
-  worker_port_range: [50000, 55000]
+  worker_port_range: [10000, 20000]
 
 simulation_settings:
   simulation_length_ns: 1

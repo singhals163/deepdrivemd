@@ -82,6 +82,7 @@ class WorkstationSettings(BaseComputeSettings):
             return Config(
                 run_dir=str(run_dir),
                 retries=self.retries,
+                max_idletime=3600.0,  # Don't kill idle workers for 1 hour
                 executors=[
                     HighThroughputExecutor(
                         address="localhost",
