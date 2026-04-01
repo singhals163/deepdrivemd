@@ -1,0 +1,41 @@
+# Study 4: KRAS dynamic (signal-driven freeze, GPU 7 pinned for ML)
+# KRAS G12D: 167 CA residues, explicit solvent, larger model
+# KRAS converges fast — this is the system where freeze should trigger
+
+simulation_input_dir: data/kras
+num_workers: 8
+simulations_per_train: 16
+simulations_per_inference: 4
+num_total_simulations: 200
+duration_sec: 3600
+
+compute_settings:
+  name: workstation
+  available_accelerators: ["0", "1", "2", "3", "4", "5", "6", "7"]
+  ml_accelerators: ["7"]
+  worker_port_range: [50000, 55000]
+
+simulation_settings:
+  simulation_length_ns: 1.0
+  report_interval_ps: 10
+  temperature_kelvin: 310
+  solvent_type: explicit
+  mda_selection: "protein and name CA and resid 1:167"
+  rmsd_reference_pdb: data/kras/kras_reference.pdb
+
+train_settings:
+  cvae_settings_yaml: examples/kras/cvae-prod-settings.yaml
+
+inference_settings:
+  cvae_settings_yaml: examples/kras/cvae-prod-settings.yaml
+  num_outliers: 300
+
+# Dynamic provisioning settings
+policy_name: composite
+policy_window_size: 5
+policy_loss_threshold: 0.02
+policy_min_improvement: 0.005
+cooldown_sec: 30.0
+signal_window_size: 20
+redis_host: "127.0.0.1"
+redis_port: 6379
