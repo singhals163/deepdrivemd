@@ -240,27 +240,26 @@ c3d4e5f	kras	8.200	7.100	15.0	22.0	12	5	30	45	improved	composite; FREEZE@5 trigg
 
 LOOP FOREVER:
 
-1. **Read the state**: Check `results.tsv`, `git log`, current policy code.
-2. **Form a hypothesis**: Based on known issues (see PROGRESS.md) or previous
-   results. Examples:
-   - "KRAS should freeze after ~5 cycles → test if composite policy detects it"
-   - "CLN025 needs more inference throughput → inference-only mode after freeze"
-   - "Submit telemetry after inference too, not just after training"
-   - "Add a 4th signal: simulation RMSD improvement rate"
-   - "Prioritize inference over training on ML GPU"
-3. **Implement the change**: Edit policy.py and/or openmm_cvae_dynamic.py.
+1. **Read the state**: Check `results.tsv`, `git log`, current policy code,
+   and the available signals catalog above.
+2. **Form a hypothesis**: What change to the signals, policy logic, or
+   workflow could improve results? Look at which signals are available
+   but unused, where the current policy makes wrong decisions, and what
+   the data from previous runs tells you.
+3. **Implement the change**: Edit policy.py and/or openmm_cvae_dynamic.py
+   and/or the dynamic YAML configs.
 4. **git commit** with a descriptive message.
-5. **Run the experiment** on the system most likely to show the effect:
-   - **KRAS** for freeze/GPU-reclaim testing (the main target)
-   - **CLN025** for inference-throughput changes
-   - **BBA** for signal tuning (fast iterations)
-   - **NTL9** for general validation
-6. **Extract and compare** against saved baseline.
-7. **Log to results.tsv**.
-8. **Keep or revert**:
-   - If dynamic beats baseline → keep the commit
-   - If worse or neutral with added complexity → `git reset --hard HEAD~1`
-9. **Repeat** with the next hypothesis.
+5. **Run the experiment** on one system first (BBA is fastest for quick
+   iteration). Extract and compare against saved baseline.
+6. **If promising, test on ALL four systems** (BBA, CLN025, NTL9, KRAS).
+   A change is only "kept" if it beats or matches baseline on every system.
+   Log each system's results to `results.tsv`.
+7. **Keep or revert**:
+   - If dynamic beats or matches baseline on ALL systems → keep the commit
+   - If it regresses on ANY system → `git reset --hard HEAD~1`
+   - Exception: if it dramatically improves some systems and only slightly
+     regresses on one, use judgment — but document the tradeoff
+8. **Repeat** with the next hypothesis.
 
 ## Available signals
 
