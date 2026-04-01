@@ -143,8 +143,8 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         # Application signals
         self._recent_rmsds: list = []  # Rolling RMSD from simulations
         self._recent_nn_fractions: list = []  # Rolling near-native fractions
-        self._last_inference_dirs: set = set()  # For inference stability
-        self._inference_stability: float = 0.0  # 0-1, fraction unchanged
+        self._last_inference_selections: set = set()  # For Jaccard similarity
+        self._jaccard_similarity: float = 0.0  # Jaccard of (sim_dir, sim_frame) pairs
         self._total_sim_frames: int = 0  # Total frames seen so far
         self._prev_sim_count: int = 0  # For data novelty tracking
 
@@ -340,7 +340,7 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         #  4: mean_rmsd           (Application)
         #  5: nn_fraction         (Application)
         #  6: data_novelty        (Application)
-        #  7: inference_stability (Application)
+        #  7: jaccard_similarity  (Application) - Jaccard of selected (sim,frame) pairs
         #  8: staleness_ratio     (System)
         #  9: training_cost_factor(System)
         # 10: sim_throughput      (System)
@@ -353,7 +353,7 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
             mean_rmsd,                # 4
             nn_fraction,              # 5
             data_novelty,             # 6
-            self._inference_stability,# 7
+            self._jaccard_similarity, # 7
             staleness_ratio,          # 8
             training_cost_factor,     # 9
             sim_throughput,           # 10
@@ -364,7 +364,7 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
             f"Signal Monitor: norm_loss={normalized_loss:.4f}, "
             f"valid_loss={output.final_valid_loss:.1f}, "
             f"rmsd={mean_rmsd:.3f}, nn={nn_fraction:.3f}, "
-            f"novelty={data_novelty:.3f}, inf_stab={self._inference_stability:.3f}, "
+            f"novelty={data_novelty:.3f}, jaccard={self._jaccard_similarity:.3f}, "
             f"staleness={staleness_ratio:.3f}, cost={training_cost_factor:.3f}, "
             f"throughput={sim_throughput}, train_time={output.training_time_s:.1f}s, "
             f"state={state.name}, window={self.signal_monitor.get_stats()['window_size']}"
@@ -373,13 +373,19 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
     def handle_inference_output(self, output: CVAEInferenceOutput) -> None:
         self.resource_broker.register_ml_task_complete()
 
-        # Track inference stability: what fraction of restart dirs are the same
-        current_dirs = set(str(d) for d in output.sim_dirs)
-        if self._last_inference_dirs:
-            overlap = len(current_dirs & self._last_inference_dirs)
-            total = max(len(current_dirs), 1)
-            self._inference_stability = overlap / total
-        self._last_inference_dirs = current_dirs
+        # Track outlier selection instability via Jaccard similarity.
+        # Jaccard(A, B) = |A ∩ B| / |A ∪ B| over (sim_dir, sim_frame) pairs.
+        # Low Jaccard (<0.9) means the model is discovering new conformational
+        # states — highly beneficial to train. High Jaccard means steering
+        # stagnation — further training is a waste of compute.
+        current_selections = set(
+            (str(d), int(f)) for d, f in zip(output.sim_dirs, output.sim_frames)
+        )
+        if self._last_inference_selections:
+            intersection = len(current_selections & self._last_inference_selections)
+            union = len(current_selections | self._last_inference_selections)
+            self._jaccard_similarity = intersection / max(union, 1)
+        self._last_inference_selections = current_selections
 
         with self.simulation_govenor:
             self.simulation_input_queue.queue.clear()
@@ -389,7 +395,7 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
                 )
         self.logger.info(
             f"Processed inference result and added {len(output.sim_dirs)} "
-            f"new restart points (stability={self._inference_stability:.3f})."
+            f"new restart points (jaccard={self._jaccard_similarity:.3f})."
         )
 
     def get_dynamic_stats(self) -> dict:

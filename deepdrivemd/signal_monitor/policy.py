@@ -135,7 +135,7 @@ class CompositePolicy(Policy):
       [4]  mean_rmsd             (App) - rolling mean RMSD of last 10 sims
       [5]  nn_fraction           (App) - rolling near-native fraction (<5A)
       [6]  data_novelty          (App) - fraction of new data since last train
-      [7]  inference_stability   (App) - restart point overlap between inferences
+      [7]  jaccard_similarity    (App) - Jaccard of selected (sim,frame) pairs
       [8]  staleness_ratio       (Sys) - training time / elapsed time
       [9]  training_cost_factor  (Sys) - training time / (elapsed * num_gpus)
       [10] sim_throughput        (Sys) - sims completed in last 60s
@@ -144,9 +144,12 @@ class CompositePolicy(Policy):
     Freeze when:
       - Training loss has plateaued (relative improvement < threshold), AND
       - RMSD is not improving (no downward trend in recent window), OR
-      - Inference output is stable (>stability_threshold of restarts unchanged)
+      - Outlier selection is stable (Jaccard > jaccard_threshold)
 
-    Resume when RMSD starts increasing (distribution shift).
+    Resume when:
+      - RMSD starts increasing (distribution shift), OR
+      - Outlier selection is unstable (Jaccard < jaccard_threshold),
+        indicating new conformational states are being discovered.
     """
 
     # Telemetry vector indices
@@ -157,7 +160,7 @@ class CompositePolicy(Policy):
     RMSD_IDX = 4
     NN_FRAC_IDX = 5
     NOVELTY_IDX = 6
-    STABILITY_IDX = 7
+    JACCARD_IDX = 7
     STALENESS_IDX = 8
     COST_IDX = 9
     THROUGHPUT_IDX = 10
@@ -168,12 +171,12 @@ class CompositePolicy(Policy):
         window_size: int = 5,
         loss_plateau_threshold: float = 0.02,
         rmsd_improvement_threshold: float = 0.1,
-        stability_threshold: float = 0.8,
+        jaccard_threshold: float = 0.9,
     ):
         self.window_size = window_size
         self.loss_plateau_threshold = loss_plateau_threshold
         self.rmsd_improvement_threshold = rmsd_improvement_threshold
-        self.stability_threshold = stability_threshold
+        self.jaccard_threshold = jaccard_threshold
 
     @property
     def name(self) -> str:
@@ -211,11 +214,27 @@ class CompositePolicy(Policy):
         degradation = second_half - first_half
         return degradation > self.rmsd_improvement_threshold
 
-    def _is_inference_stable(self, stabilities: np.ndarray) -> bool:
-        """Check if inference output has stabilized."""
-        if len(stabilities) == 0:
+    def _is_selection_stable(self, jaccards: np.ndarray) -> bool:
+        """Check if outlier selection has stabilized (high Jaccard).
+
+        A Jaccard similarity above the threshold means the model is
+        repeatedly selecting the same structures — steering stagnation.
+        """
+        if len(jaccards) == 0:
             return False
-        return np.mean(stabilities[-3:]) > self.stability_threshold
+        return np.mean(jaccards[-3:]) > self.jaccard_threshold
+
+    def _is_selection_unstable(self, jaccards: np.ndarray) -> bool:
+        """Check if outlier selection is unstable (low Jaccard).
+
+        A Jaccard similarity below the threshold means the inference
+        model is actively discovering new, unexplored conformational
+        states. Training is highly beneficial under these conditions
+        because the underlying data distribution is shifting.
+        """
+        if len(jaccards) == 0:
+            return False
+        return np.mean(jaccards[-3:]) < self.jaccard_threshold
 
     def evaluate(self, telemetry_window: List[np.ndarray]) -> WorkflowState:
         if len(telemetry_window) < self.window_size:
@@ -224,19 +243,21 @@ class CompositePolicy(Policy):
         window = telemetry_window[-self.window_size:]
         losses = np.array([float(v[self.LOSS_IDX]) for v in window])
         rmsds = np.array([float(v[self.RMSD_IDX]) for v in window])
-        stabilities = np.array([float(v[self.STABILITY_IDX]) for v in window])
+        jaccards = np.array([float(v[self.JACCARD_IDX]) for v in window])
 
         loss_plateaued = self._has_loss_plateaued(losses)
         rmsd_improving = self._is_rmsd_improving(rmsds)
         rmsd_degrading = self._is_rmsd_degrading(rmsds)
-        inference_stable = self._is_inference_stable(stabilities)
+        selection_stable = self._is_selection_stable(jaccards)
+        selection_unstable = self._is_selection_unstable(jaccards)
 
-        # RESUME: if RMSD is degrading, the model needs retraining
-        if rmsd_degrading:
+        # RESUME: RMSD degrading OR outlier selection unstable (new
+        # conformational states being explored — beneficial to retrain)
+        if rmsd_degrading or selection_unstable:
             return WorkflowState.RESUME
 
-        # DORMANT: loss plateaued AND (RMSD not improving OR inference stable)
-        if loss_plateaued and (not rmsd_improving or inference_stable):
+        # DORMANT: loss plateaued AND (RMSD not improving OR selection stable)
+        if loss_plateaued and (not rmsd_improving or selection_stable):
             return WorkflowState.DORMANT
 
         return WorkflowState.ACTIVE

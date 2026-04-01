@@ -1,23 +1,24 @@
 # autoresearch: Dynamic Provisioning Signal Optimization
 
-This is an experiment to have the LLM autonomously iterate on the signal
-monitor and composite policy to find the best configuration for dynamic
-GPU provisioning across multiple molecular systems.
+This is an experiment to have the LLM autonomously iterate on the system Kirin
+which is a system purpose built to achieve better system performance for tightly
+coupled HPC AI workflows by using dynamic GPU provisioning for AI to better steer
+simulations.
 
 ## Problem Statement
 
-The paper proposes a **pluggable architecture** that lets application
-developers decide when to use the AI component and when to turn it off
-and reclaim those resources for simulation. The architecture has four parts:
+The paper proposes a full system architecture with a **pluggable policy** that 
+lets application developers decide when to use the AI component and when to turn 
+it off and reclaim those resources for simulation. The architecture has four parts:
 
 1. **Signal Monitor** — collects telemetry, applies a pluggable policy
 2. **Policy** — developer-supplied logic that decides ACTIVE/DORMANT/RESUME
 3. **Resource Broker** — handles GPU freeze/reclaim/resume safely
 4. **Stateful Service** — checkpoints model state for fast resume
 
-The key claim is: a developer can plug in a policy appropriate for their
+One claim is: a developer can plug in a policy appropriate for their
 system, and the architecture handles everything else (transitions, GPU
-management, checkpointing). Different systems need different policies.
+management, checkpointing).
 
 **Current issues to resolve:**
 - KRAS (fast convergence) hasn't been tested — this is where freeze SHOULD fire
@@ -74,7 +75,54 @@ To set up a new experiment run:
    (`nvidia-smi`), no stale processes.
 5. **Run baselines once** for each system (save run dirs). Baselines only need
    rerunning if baseline code or configs change.
-6. **Initialize results.tsv**: Create `results.tsv` with header row.
+6. **Initialize metric tracking**: Set up three levels of metric logging that
+   persist across the entire run. These give fine-grained visibility into what
+   happened, enable rapid iteration, and surface observations for the paper.
+
+   **a) Per-run time-series log** (`results/study4/<system>_<tag>_timeseries.tsv`):
+   Append a row every time a significant event fires (sim complete, train
+   complete, inference complete, freeze/resume, etc.). Columns:
+
+   | Column | Source | Why |
+   |--------|--------|-----|
+   | `wall_clock_s` | `time.time() - t0` | Anchors everything to elapsed time |
+   | `event` | workflow handler | What triggered this row (sim, train, infer, freeze, resume) |
+   | `gpu_util_0..7` | `nvidia-smi` or `pynvml` | Per-GPU utilization snapshot — detects idle GPUs, proves reclaim works |
+   | `gpu_mem_0..7` | `nvidia-smi` or `pynvml` | Per-GPU memory — catches OOM buildup, confirms GPU release after freeze |
+   | `cpu_util` | `psutil.cpu_percent()` | Detects CPU bottlenecks in data loading |
+   | `sim_throughput` | sims_completed / wall_clock_s | Running rate — drop means ML is starving sims |
+   | `queue_depth_sim` | Parsl executor | Pending sim tasks — high = backpressure |
+   | `queue_depth_train` | Parsl executor | Pending train tasks |
+   | `queue_depth_infer` | Parsl executor | Pending inference tasks |
+   | `staleness_pct` | time_since_last_model_update / wall_clock_s | Fraction of time the model is stale — key paper metric |
+   | `train_loss` | `final_loss` from train app | Most recent training loss |
+   | `valid_loss` | `trainer.loss_curve_["valid_loss"][-1]` | Overfitting detection |
+   | `recon_loss` | `trainer.loss_curve_["train_recon_loss"][-1]` | Reconstruction quality |
+   | `kld_loss` | `trainer.loss_curve_["train_kld_loss"][-1]` | Latent space quality |
+   | `loss_slope` | linear regression over loss window | Plateau detection signal |
+   | `train_time_s` | timer around train cycle | Growing = dataset overhead problem |
+   | `infer_time_s` | timer around inference cycle | Inference latency |
+   | `sim_rmsd` | `rmsd.npy` from latest sim | Per-sim RMSD |
+   | `rolling_rmsd_mean` | mean of last 10 sims | Smoothed science quality |
+   | `rolling_rmsd_std` | std of last 10 sims | High = still exploring, low = converged |
+   | `rmsd_slope` | linear regression over recent sims | Trend direction |
+   | `nn5_rolling` | % of last N frames with RMSD < 5Å | Running near-native fraction |
+   | `outlier_score_mean` | `clf.negative_outlier_factor_` mean | Inference quality signal |
+   | `embedding_spread` | variance of CVAE latent embeddings | How well model distinguishes conformations |
+   | `data_novelty_pct` | fraction of new frames in unexplored regions | Low = redundant training data |
+   | `policy_state` | ACTIVE / DORMANT / RESUME | Current policy decision |
+   | `policy_signals` | JSON blob of signal values fed to policy | Exactly what the policy saw when it decided |
+
+   **b) Experiment summary** (`results.tsv`): One row per experiment run,
+   with the full header described in the Logging Results section below.
+   This is the cross-experiment comparison table.
+
+   **c) Signal audit log** (`results/study4/<system>_<tag>_signals.jsonl`):
+   Every time the policy is evaluated, append a JSON line with all input
+   signals, the policy decision, and the reason string. This is the primary
+   data source for the paper's analysis of which signals drive correct
+   decisions for which systems.
+
 7. **Confirm and go**.
 
 ## Experimentation
@@ -107,6 +155,10 @@ Key metrics (lower RMSD is better, higher near-native % is better):
 - `last10_rmsd`: mean RMSD of last 10 simulations (convergence quality)
 - `train_count`: number of successful training cycles
 - `inference_count`: number of inference cycles (more = better steering)
+
+These are the primary success criteria. The full set of tracked system, ML,
+and application metrics is defined in the time-series schema (Setup step 6a)
+and the `results.tsv` header (Logging Results section).
 
 ## System-specific notes
 
@@ -175,6 +227,8 @@ These are the reference baselines. Only rerun if baseline code changes.
 
 ## Extracting results
 
+### Quick comparison (science metrics)
+
 ```bash
 # Set paths explicitly (don't rely on ls ordering)
 BASELINE=$(cat results/study4/${SYSTEM}_baseline_run_dir.txt)
@@ -214,13 +268,69 @@ for k in ['sims','trains','infers','mean_rmsd','nn5','last10']:
 "
 ```
 
+This gives the quick science comparison. For the full `results.tsv` summary row
+(system metrics, freeze details, slopes, etc.), derive those columns from the
+per-run time-series log — see "Deriving summary from time-series" in the
+Logging Results section below.
+
 ## Logging results
 
-Log each experiment to `results.tsv` (tab-separated):
+### Per-run time-series (`results/study4/<system>_<tag>_timeseries.tsv`)
+
+Append a row on every significant event (sim complete, train complete, inference
+complete, freeze, resume). This is the fine-grained record of everything that
+happened during the run. See the column table in Setup step 6a for the full
+schema. The time-series lets you:
+
+- Reconstruct GPU utilization over the entire run to prove reclaim works
+- Pinpoint exactly when loss plateau / RMSD convergence / freeze occurred
+- Correlate system backpressure (queue depth) with ML quality (loss, RMSD)
+- Identify whether throughput improved after freeze (sims/min before vs after)
+- Spot anomalies: OOM buildup, training time growth, inference latency spikes
+
+### Signal audit log (`results/study4/<system>_<tag>_signals.jsonl`)
+
+One JSON line per policy evaluation. Each line contains:
+```json
+{"wall_clock_s": 142.3, "cycle": 5, "signals": {"train_loss": 0.032, "loss_slope": -0.001, "rolling_rmsd": 5.2, "rmsd_slope": -0.04, "nn5_rolling": 35.1, "staleness_pct": 0.18, "sim_throughput": 3.2, ...}, "decision": "ACTIVE", "reason": "loss still decreasing; rmsd improving"}
+```
+
+This is the **primary evidence for the paper**: it shows exactly which signals
+the policy used, what values they had, and what decision resulted. Across
+many runs, this data reveals which signals are predictive for each system.
+
+### Experiment summary (`results.tsv`)
+
+One row per experiment run (tab-separated):
 
 ```
-commit	system	base_rmsd	dyn_rmsd	base_nn5	dyn_nn5	base_trains	dyn_trains	base_infers	dyn_infers	status	description
+commit	system	base_rmsd	dyn_rmsd	base_nn5	dyn_nn5	base_trains	dyn_trains	base_infers	dyn_infers	base_sims	dyn_sims	freeze_fired	freeze_cycle	gpu_reclaimed	post_freeze_sims	avg_staleness_pct	avg_sim_throughput	avg_train_time_s	peak_gpu_util	final_loss_slope	final_rmsd_slope	status	signals_used	description
 ```
+
+**Column definitions:**
+
+| Column | Description |
+|--------|-------------|
+| `commit` | Git short SHA for reproducibility |
+| `system` | bba / cln025 / ntl9 / kras |
+| `base_rmsd`, `dyn_rmsd` | Mean RMSD for baseline vs dynamic |
+| `base_nn5`, `dyn_nn5` | Near-native % (< 5Å) for baseline vs dynamic |
+| `base_trains`, `dyn_trains` | Training cycle counts |
+| `base_infers`, `dyn_infers` | Inference cycle counts |
+| `base_sims`, `dyn_sims` | Total simulations completed |
+| `freeze_fired` | yes/no — did the policy trigger DORMANT? |
+| `freeze_cycle` | Which training cycle triggered freeze (blank if none) |
+| `gpu_reclaimed` | yes/no — was GPU 7 actually reallocated to sims? |
+| `post_freeze_sims` | Number of sims completed after freeze (0 if no freeze) |
+| `avg_staleness_pct` | Average model staleness across the run |
+| `avg_sim_throughput` | Average sims/min across the run |
+| `avg_train_time_s` | Average training cycle duration |
+| `peak_gpu_util` | Peak ML GPU utilization during training |
+| `final_loss_slope` | Loss slope at end of run (negative = still improving) |
+| `final_rmsd_slope` | RMSD slope at end of run (negative = still improving) |
+| `status` | `improved` / `neutral` / `regressed` / `crash` |
+| `signals_used` | Which signals the policy consumed (e.g., `loss+rmsd+stab+nn5`) |
+| `description` | Free text: what changed, what happened, key observations |
 
 Status: `improved` (dynamic beats baseline on science AND efficiency),
 `neutral` (similar), `regressed` (baseline better), `crash` (dynamic failed).
@@ -229,11 +339,58 @@ In the description, always note **which signals drove the decision** and
 whether a freeze event occurred. This builds the evidence for the paper
 about which signals matter for which systems.
 
-Example:
+### Deriving summary from time-series
+
+After each run, compute the summary row columns from the time-series log:
+```python
+import pandas as pd, json, numpy as np
+
+ts = pd.read_csv(f'results/study4/{system}_{tag}_timeseries.tsv', sep='\t')
+
+# System metrics
+avg_staleness = ts['staleness_pct'].mean()
+avg_throughput = ts[ts['event']=='sim']['sim_throughput'].mean()
+avg_train_time = ts[ts['event']=='train']['train_time_s'].mean()
+gpu_cols = [c for c in ts.columns if c.startswith('gpu_util')]
+peak_gpu = ts[gpu_cols].max().max()
+
+# Freeze details
+freeze_rows = ts[ts['policy_state']=='DORMANT']
+freeze_fired = len(freeze_rows) > 0
+if freeze_fired:
+    freeze_wall = freeze_rows.iloc[0]['wall_clock_s']
+    # Extract cycle number from the signal audit log
+    with open(f'results/study4/{system}_{tag}_signals.jsonl') as f:
+        for line in f:
+            entry = json.loads(line)
+            if entry['decision'] == 'DORMANT':
+                freeze_cycle = entry['cycle']
+                break
+    gpu_reclaimed = 'yes'  # verify from GPU util drop after freeze
+    post_freeze_sims = len(ts[(ts['event']=='sim') & (ts['wall_clock_s'] > freeze_wall)])
+else:
+    freeze_cycle = ''
+    gpu_reclaimed = 'no'
+    post_freeze_sims = 0
+
+# Final slopes (from last entries in time-series)
+train_rows = ts[ts['event']=='train'].tail(5)
+final_loss_slope = np.polyfit(range(len(train_rows)), train_rows['train_loss'], 1)[0] if len(train_rows) >= 2 else 0.0
+sim_rows = ts[ts['event']=='sim'].tail(10)
+final_rmsd_slope = np.polyfit(range(len(sim_rows)), sim_rows['sim_rmsd'], 1)[0] if len(sim_rows) >= 2 else 0.0
+
+# Signals used — read from the last policy evaluation
+with open(f'results/study4/{system}_{tag}_signals.jsonl') as f:
+    lines = f.readlines()
+    last_eval = json.loads(lines[-1])
+    signals_used = '+'.join(sorted(last_eval['signals'].keys()))
 ```
-a1b2c3d	bba	5.985	5.606	31.7	38.3	14	15	53	65	improved	composite(loss+rmsd+stab); no freeze; more inferences helped
-b2c3d4e	cln025	5.679	6.063	20.9	10.6	12	12	47	34	regressed	composite; no freeze; inference bottleneck on single ML GPU
-c3d4e5f	kras	8.200	7.100	15.0	22.0	12	5	30	45	improved	composite; FREEZE@5 triggered by loss plateau; GPU7 reclaimed; +15 sims
+
+### Example summary rows
+```
+a1b2c3d	bba	5.985	5.606	31.7	38.3	14	15	53	65	104	118	no		no	0	0.22	3.1	58.2	95.3	-0.002	-0.04	improved	loss+rmsd+stab	composite(loss+rmsd+stab); no freeze; more inferences helped
+b2c3d4e	cln025	5.679	6.063	20.9	10.6	12	12	47	34	112	98	no		no	0	0.31	2.8	62.1	94.1	-0.001	+0.02	regressed	loss+rmsd+stab	composite; no freeze; inference bottleneck on single ML GPU
+c3d4e5f	kras	8.200	7.100	15.0	22.0	12	5	30	45	48	63	yes	5	yes	15	0.14	1.8	120.5	97.2	0.000	-0.08	improved	loss+rmsd+stab+nn5	composite; FREEZE@5 triggered by loss plateau; GPU7 reclaimed; +15 sims
 ```
 
 ## The experiment loop
@@ -249,13 +406,18 @@ make good decisions with incomplete information. For each signal:
    novelty in `handle_simulation_output`, etc.)
 2. Log the signal value so it appears in the runtime log
 3. Include it in the telemetry vector passed to the signal monitor
-4. Run a quick BBA test to verify nothing crashes
-5. Commit
+4. **Write to the three log files** defined in Setup step 6:
+   - Append a row to the per-run time-series TSV on each event
+   - Append a JSON line to the signal audit log on each policy evaluation
+   - After the run completes, derive and append the summary row to `results.tsv`
+5. Run a quick BBA test to verify nothing crashes and all three log files
+   are populated correctly
+6. Commit
 
 Do NOT try to tune thresholds or change freeze logic during this phase.
-The goal is to get all signals flowing and visible. Once you can see
-all the signals in the logs, you have the information to design good
-policies.
+The goal is to get all signals flowing, visible, and persisted to the log
+files. Once you can see all the signals in the logs and time-series, you
+have the information to design good policies.
 
 ### Phase 2: Experiment loop
 
@@ -263,8 +425,10 @@ Once all signals are instrumented:
 
 LOOP FOREVER:
 
-1. **Read the state**: Check `results.tsv`, `git log`, current policy code,
-   and the signal values from recent run logs.
+1. **Read the state**: Check `results.tsv` (experiment summary), the per-run
+   time-series TSVs, the signal audit JSONLs, `git log`, and current policy
+   code. The time-series and signal logs are the richest data sources — use
+   them to understand exactly what happened and why.
 2. **Form a hypothesis**: Based on what the signal data tells you about
    each system's behavior. Let the data guide you — don't guess.
 3. **Implement the change**: Edit policy.py and/or openmm_cvae_dynamic.py
