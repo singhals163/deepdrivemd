@@ -6,17 +6,41 @@ GPU provisioning across multiple molecular systems.
 
 ## Problem Statement
 
-The dynamic provisioning system needs to decide when to freeze AI training
-and reclaim GPUs for simulation. The current CompositePolicy uses three
-signals but has known issues:
-- CLN025 underperforms baseline (inference bottleneck)
-- No system triggers an actual freeze (loss threshold never met for BBA/NTL9)
-- GPU 7 sits idle after freeze instead of running simulations
+The paper proposes a **pluggable architecture** that lets application
+developers decide when to use the AI component and when to turn it off
+and reclaim those resources for simulation. The architecture has four parts:
 
-The goal: find a signal configuration + policy logic that makes the dynamic
-system **beat or match baseline on ALL three protein systems** (BBA, CLN025,
-NTL9) on both scientific quality (RMSD, near-native %) and system efficiency
-(GPU utilization, training waste reduction).
+1. **Signal Monitor** — collects telemetry, applies a pluggable policy
+2. **Policy** — developer-supplied logic that decides ACTIVE/DORMANT/RESUME
+3. **Resource Broker** — handles GPU freeze/reclaim/resume safely
+4. **Stateful Service** — checkpoints model state for fast resume
+
+The key claim is: a developer can plug in a policy appropriate for their
+system, and the architecture handles everything else (transitions, GPU
+management, checkpointing). Different systems need different policies.
+
+**Current issues to resolve:**
+- KRAS (fast convergence) hasn't been tested — this is where freeze SHOULD fire
+- CLN025 underperforms baseline (inference bottleneck on single ML GPU)
+- GPU 7 sits idle after freeze instead of running simulations
+- The full lifecycle (ACTIVE → DORMANT → GPU reclaimed → more sims) is untested
+
+**The goal:** demonstrate that the architecture works end-to-end across
+4 protein systems, that each system can use a policy appropriate for its
+convergence behavior, and that the dynamic system beats or matches
+baseline on scientific quality while improving system efficiency.
+
+### Why KRAS matters most
+
+KRAS G12D converges fast. The paper shows freeze@5 gives 89.9% near-native
+vs 69.0% for always-retrain — a 30% improvement from stopping training
+early. KRAS is the only system where the **full dynamic provisioning
+lifecycle** should fire: ACTIVE → loss plateaus → DORMANT → GPU reclaimed
+→ more simulations. If the composite policy can detect KRAS convergence
+and freeze correctly, that validates the entire architecture.
+
+BBA/NTL9/CLN025 are systems where training should continue — the correct
+behavior is staying ACTIVE, which our policy already does.
 
 ## Setup
 
@@ -28,19 +52,21 @@ To set up a new experiment run:
 3. **Read the in-scope files** for full context:
    - `results/PROGRESS.md` — current state, known issues, results so far
    - `deepdrivemd/signal_monitor/policy.py` — the policies you modify
-   - `deepdrivemd/workflows/openmm_cvae_dynamic.py` — the dynamic workflow (signal collection + dispatch)
-   - `deepdrivemd/apps/cvae_train/app.py` — training app (where final_loss comes from)
+   - `deepdrivemd/workflows/openmm_cvae_dynamic.py` — the dynamic workflow
+   - `deepdrivemd/apps/cvae_train/app.py` — training app (final_loss, contact map loader)
    - `deepdrivemd/apps/cvae_inference/app.py` — inference app (outlier selection)
    - `evaluation/study4/configs/` — YAML configs for each system
 4. **Verify infrastructure**: Redis running (`redis-cli ping`), GPUs available
    (`nvidia-smi`), no stale processes.
-5. **Initialize results.tsv**: Create `results.tsv` with header row.
-6. **Confirm and go**.
+5. **Run baselines once** for each system (save run dirs). Baselines only need
+   rerunning if baseline code or configs change.
+6. **Initialize results.tsv**: Create `results.tsv` with header row.
+7. **Confirm and go**.
 
 ## Experimentation
 
-Each experiment runs a **paired comparison**: baseline vs dynamic for one
-protein system, each with a 15-minute wall-clock timeout.
+Each experiment runs the **dynamic workflow only** against a saved baseline.
+Baselines are run once and reused — only rerun if baseline code changes.
 
 **What you CAN modify:**
 - `deepdrivemd/signal_monitor/policy.py` — policy logic, thresholds, new signals
@@ -55,7 +81,11 @@ protein system, each with a 15-minute wall-clock timeout.
   extract more signals from its output)
 - `deepdrivemd/api.py` — base workflow class
 
-**The goal is simple: beat baseline on RMSD and near-native % for all 3 systems.**
+**Do NOT revert `deepdrivemd/apps/cvae_train/app.py`** — it contains the
+sparse COO contact map normalization fix that all systems depend on, plus
+the `final_loss` field needed for signal telemetry.
+
+**The goal is simple: beat baseline on RMSD and near-native % for all 4 systems.**
 
 Key metrics (lower RMSD is better, higher near-native % is better):
 - `mean_rmsd`: average RMSD across all simulation frames
@@ -64,39 +94,77 @@ Key metrics (lower RMSD is better, higher near-native % is better):
 - `train_count`: number of successful training cycles
 - `inference_count`: number of inference cycles (more = better steering)
 
+## System-specific notes
+
+| System | Residues | Solvent | Sim time | Sims/train | Timeout | Key behavior |
+|--------|----------|---------|----------|------------|---------|-------------|
+| BBA | 28 | implicit | ~10s/sim | 6 | 15 min | Needs continued training |
+| CLN025 | 93 atoms | implicit | ~10s/sim | 6 | 15 min | Needs frequent inference |
+| NTL9 | 39 | implicit | ~10s/sim | 6 | 15 min | Needs continued training |
+| KRAS | 167 | explicit | ~40s/sim | 16 | 45 min | Converges fast, freeze should help |
+
+KRAS needs longer timeouts because explicit solvent is slower and it needs
+16 sims before training triggers. Use `timeout 2700` (45 min) for KRAS runs.
+
 ## Running an experiment
 
 ```bash
 # Kill any stale processes
 pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
 
-# Pick a system: bba, cln025, or ntl9
+# Pick a system: bba, cln025, ntl9, or kras
 SYSTEM=bba
+TIMEOUT=900  # 15 min for BBA/CLN025/NTL9, use 2700 for KRAS
 
-# Run baseline (15 min)
+# Start Redis (only needed for dynamic)
+redis-server --daemonize yes --port 6379 --save "" 2>/dev/null
+
+# Run dynamic
 cd /shivam/deepdrivemd
-PYTHONPATH=/shivam/deepdrivemd timeout 900 python3 \
+PYTHONPATH=/shivam/deepdrivemd timeout $TIMEOUT python3 \
+  deepdrivemd/workflows/openmm_cvae_dynamic.py \
+  -c evaluation/study4/configs/${SYSTEM}_dynamic.yaml \
+  > /tmp/${SYSTEM}_dynamic.log 2>&1
+
+# Clean up after
+pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
+```
+
+### Running a baseline (only needed once per system)
+
+```bash
+pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
+
+SYSTEM=bba
+TIMEOUT=900  # 15 min for BBA/CLN025/NTL9, use 2700 for KRAS
+
+cd /shivam/deepdrivemd
+PYTHONPATH=/shivam/deepdrivemd timeout $TIMEOUT python3 \
   deepdrivemd/workflows/openmm_cvae.py \
   -c evaluation/study4/configs/${SYSTEM}_baseline.yaml \
   > /tmp/${SYSTEM}_baseline.log 2>&1
 
-# Clean up between runs
-pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3
-
-# Run dynamic (15 min, needs Redis)
-redis-server --daemonize yes --port 6379 --save "" 2>/dev/null
-PYTHONPATH=/shivam/deepdrivemd timeout 900 python3 \
-  deepdrivemd/workflows/openmm_cvae_dynamic.py \
-  -c evaluation/study4/configs/${SYSTEM}_dynamic.yaml \
-  > /tmp/${SYSTEM}_dynamic.log 2>&1
+# Save the run dir path
+echo "$(ls -td runs/experiment-* | head -1)" > results/study4/${SYSTEM}_baseline_run_dir.txt
 ```
+
+## Saved baseline results
+
+These are the reference baselines. Only rerun if baseline code changes.
+
+| System | Run dir | Sims | Trains | Infer | Mean RMSD | NN<5Å |
+|--------|---------|------|--------|-------|-----------|-------|
+| BBA | `runs/experiment-310326-015111` | 104 | 14 | 53 | 5.985 | 31.7% |
+| CLN025 | `runs/experiment-310326-220720` | 112 | 12 | 47 | 5.679 | 20.9% |
+| NTL9 | `runs/experiment-310326-205255` | 98 | 14 | 63 | 6.815 | 18.9% |
+| KRAS | *not yet run (needs 45 min)* | — | — | — | — | — |
 
 ## Extracting results
 
 ```bash
-# Find the latest two run directories
-BASELINE=$(ls -td /shivam/deepdrivemd/runs/experiment-* | head -2 | tail -1)
-DYNAMIC=$(ls -td /shivam/deepdrivemd/runs/experiment-* | head -1)
+# Set paths explicitly (don't rely on ls ordering)
+BASELINE=$(cat results/study4/${SYSTEM}_baseline_run_dir.txt)
+DYNAMIC=$(ls -td runs/experiment-* | head -1)
 
 # Compare
 python3 -c "
@@ -156,19 +224,19 @@ LOOP FOREVER:
 1. **Read the state**: Check `results.tsv`, `git log`, current policy code.
 2. **Form a hypothesis**: Based on known issues (see PROGRESS.md) or previous
    results. Examples:
-   - "CLN025 needs more inference throughput → submit telemetry after inference too"
-   - "Signal should include simulation throughput rate"
-   - "Freeze threshold is too conservative → lower loss_plateau_threshold"
-   - "Submit telemetry from handle_inference_output, not just handle_train_output"
+   - "KRAS should freeze after ~5 cycles → test if composite policy detects it"
+   - "CLN025 needs more inference throughput → inference-only mode after freeze"
+   - "Submit telemetry after inference too, not just after training"
    - "Add a 4th signal: simulation RMSD improvement rate"
-   - "Try inference-only mode after freeze instead of stopping inference"
+   - "Prioritize inference over training on ML GPU"
 3. **Implement the change**: Edit policy.py and/or openmm_cvae_dynamic.py.
 4. **git commit** with a descriptive message.
-5. **Run the experiment** on the system most likely to show the effect.
-   - CLN025 for inference-related changes
-   - BBA for signal/freeze-related changes
-   - NTL9 for general validation
-6. **Extract and compare** results.
+5. **Run the experiment** on the system most likely to show the effect:
+   - **KRAS** for freeze/GPU-reclaim testing (the main target)
+   - **CLN025** for inference-throughput changes
+   - **BBA** for signal tuning (fast iterations)
+   - **NTL9** for general validation
+6. **Extract and compare** against saved baseline.
 7. **Log to results.tsv**.
 8. **Keep or revert**:
    - If dynamic beats baseline → keep the commit
@@ -177,37 +245,46 @@ LOOP FOREVER:
 
 ## Ideas to try (ordered by expected impact)
 
-1. **Submit telemetry after inference too** — currently only after training.
+1. **Run KRAS and validate freeze triggers** — the composite policy should
+   detect KRAS convergence and fire DORMANT. If it doesn't, tune thresholds.
+   This is the single most important experiment.
+
+2. **Inference-only mode after freeze** — after freeze, keep running inference
+   with the frozen model (no training). This gives CLN025 the steering it
+   needs without the training overhead. Currently inference stops when
+   training stops.
+
+3. **Submit telemetry after inference too** — currently only after training.
    This would let the signal monitor react faster to quality changes.
 
-2. **Prioritize inference over training on ML GPU** — inference is fast (~5s)
+4. **Prioritize inference over training on ML GPU** — inference is fast (~5s)
    and high-value for steering. Training takes ~60s. When both are queued,
    inference should go first.
 
-3. **Add simulation throughput signal** — if sims/minute drops, the ML is
+5. **GPU 7 sim routing after freeze** — verify that after freeze, GPU 7
+   actually runs simulations and throughput increases. The round-robin
+   routing in `simulate()` is implemented but untested with real freeze.
+
+6. **Add simulation throughput signal** — if sims/minute drops, the ML is
    hogging GPU time. Freeze to restore throughput.
 
-4. **Inference-only mode** — after freeze, keep running inference with the
-   frozen model (no training). This gives CLN025 the steering it needs
-   without the training overhead.
-
-5. **Adaptive freeze threshold** — instead of fixed `loss_plateau_threshold`,
+7. **Adaptive freeze threshold** — instead of fixed `loss_plateau_threshold`,
    compute it relative to the loss variance in the window.
 
-6. **GPU 7 sim routing fix** — verify that after freeze, GPU 7 actually
-   runs simulations and the throughput increases.
-
-7. **Multi-cycle RMSD trend** — instead of comparing halves of the RMSD
+8. **Multi-cycle RMSD trend** — instead of comparing halves of the RMSD
    window, use a linear regression slope. More robust to noise.
 
 ## Critical constraints
 
-- **Always run baseline first** for a fair comparison (same machine state).
+- **Baselines are run once and saved.** Only rerun if baseline code changes.
 - **Kill ALL stale processes** between runs — interchange and worker zombies
-  will cause port conflicts and GPU memory leaks.
-- **15-minute timeout** per run. If a run exceeds this, kill and treat as crash.
+  cause port conflicts and GPU memory leaks. Always run:
+  `pkill -9 -f "interchange\|process_worker" 2>/dev/null; sleep 3`
+- **Timeouts**: 15 min for BBA/CLN025/NTL9, 45 min for KRAS.
 - **Redis only for dynamic** — never start Redis for baseline runs.
 - **Commit before running** — so you can revert cleanly if it fails.
+- **Check training success** — always verify trains are OK, not FAIL.
+  The contact map loader fix is critical; don't revert `cvae_train/app.py`.
 
 ## NEVER STOP
 
@@ -218,5 +295,6 @@ re-read PROGRESS.md and the policy code, try combinations of previous
 changes, or try more radical approaches (different policy entirely,
 different signal sources, different freeze/resume logic).
 
-Each paired experiment takes ~35 minutes (15 min baseline + 15 min dynamic +
-5 min overhead). You can run ~2 per hour, ~16 overnight. Make each one count.
+Each dynamic-only experiment takes ~20 minutes (15 min run + 5 min overhead)
+for BBA/CLN025/NTL9, or ~50 minutes for KRAS. You can run ~3 per hour on
+fast systems, ~1 per hour on KRAS. Make each one count.
