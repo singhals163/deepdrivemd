@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pandas as pd
 import torch
@@ -54,7 +56,9 @@ class CVAETrainApplication(Application):
 
         # Train model
         model_dir = self.workdir / "model"  # Need to create new directory
+        t_train_start = time.perf_counter()
         trainer.fit(X=contact_maps, scalars={"rmsd": rmsds}, output_path=model_dir)
+        training_time_s = time.perf_counter() - t_train_start
 
         # Log the loss
         pd.DataFrame(trainer.loss_curve_).to_csv(model_dir / "loss.csv")
@@ -67,12 +71,16 @@ class CVAETrainApplication(Application):
             self.persistent_dir / "model" / "checkpoints" / model_weight_path.name
         )
 
-        # Extract final training loss for signal monitor telemetry
-        final_loss = float(trainer.loss_curve_["train_loss"][-1]) if trainer.loss_curve_ else 0.0
-
+        # Extract all ML signals for the signal monitor
+        lc = trainer.loss_curve_
         output_data = CVAETrainOutput(
             model_weight_path=model_weight_path,
-            final_loss=final_loss,
+            final_loss=float(lc["train_loss"][-1]) if lc else 0.0,
+            final_valid_loss=float(lc["valid_loss"][-1]) if lc and "valid_loss" in lc else 0.0,
+            final_recon_loss=float(lc["train_recon_loss"][-1]) if lc and "train_recon_loss" in lc else 0.0,
+            final_kld_loss=float(lc["train_kld_loss"][-1]) if lc and "train_kld_loss" in lc else 0.0,
+            training_time_s=training_time_s,
+            num_training_samples=len(contact_maps),
         )
         # Log the output data
         output_data.dump_yaml(self.workdir / "output.yaml")

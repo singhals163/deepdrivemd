@@ -16,7 +16,13 @@ class CVAETrainInput(BatchSettings):
 
 class CVAETrainOutput(BaseSettings):
     model_weight_path: Path
+    # ML signals for the signal monitor
     final_loss: float = 0.0
+    final_valid_loss: float = 0.0
+    final_recon_loss: float = 0.0
+    final_kld_loss: float = 0.0
+    training_time_s: float = 0.0
+    num_training_samples: int = 0
 
 
 class CVAESettings(BaseSettings):

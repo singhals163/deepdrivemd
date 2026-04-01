@@ -125,10 +125,21 @@ class SlidingWindowPolicy(Policy):
 class CompositePolicy(Policy):
     """Freeze when multiple signals agree that AI is no longer helping.
 
-    Evaluates three independent signals from the telemetry vector:
-      [0] = normalized training loss (relative to first loss observed)
-      [1] = mean simulation RMSD (application quality)
-      [2] = inference stability (0-1, fraction of restart points unchanged)
+    Evaluates signals from ML, application, and system layers.
+
+    Telemetry vector layout (12 signals):
+      [0]  normalized_loss       (ML) - training loss / first loss
+      [1]  valid_loss            (ML) - validation loss (raw)
+      [2]  recon_loss            (ML) - reconstruction loss (raw)
+      [3]  kld_loss              (ML) - KL divergence (raw)
+      [4]  mean_rmsd             (App) - rolling mean RMSD of last 10 sims
+      [5]  nn_fraction           (App) - rolling near-native fraction (<5A)
+      [6]  data_novelty          (App) - fraction of new data since last train
+      [7]  inference_stability   (App) - restart point overlap between inferences
+      [8]  staleness_ratio       (Sys) - training time / elapsed time
+      [9]  training_cost_factor  (Sys) - training time / (elapsed * num_gpus)
+      [10] sim_throughput        (Sys) - sims completed in last 60s
+      [11] training_time_s       (Sys) - wall time of last training cycle
 
     Freeze when:
       - Training loss has plateaued (relative improvement < threshold), AND
@@ -136,14 +147,21 @@ class CompositePolicy(Policy):
       - Inference output is stable (>stability_threshold of restarts unchanged)
 
     Resume when RMSD starts increasing (distribution shift).
-
-    Telemetry vector layout:
-      v = [normalized_loss, mean_rmsd, inference_stability]
     """
 
+    # Telemetry vector indices
     LOSS_IDX = 0
-    RMSD_IDX = 1
-    STABILITY_IDX = 2
+    VALID_LOSS_IDX = 1
+    RECON_LOSS_IDX = 2
+    KLD_LOSS_IDX = 3
+    RMSD_IDX = 4
+    NN_FRAC_IDX = 5
+    NOVELTY_IDX = 6
+    STABILITY_IDX = 7
+    STALENESS_IDX = 8
+    COST_IDX = 9
+    THROUGHPUT_IDX = 10
+    TRAIN_TIME_IDX = 11
 
     def __init__(
         self,

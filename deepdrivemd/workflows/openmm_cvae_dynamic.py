@@ -123,11 +123,30 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         self.simulation_input_queue: Queue[MDSimulationInput] = Queue()
         self._ml_gpu_sim_active = False
 
-        # Telemetry tracking for composite signal
+        # ── Telemetry tracking: all available signals ──
+
+        # ML model signals
         self._first_loss: Optional[float] = None  # For loss normalization
+        self._latest_train_loss: float = 0.0
+        self._latest_valid_loss: float = 0.0
+        self._latest_recon_loss: float = 0.0
+        self._latest_kld_loss: float = 0.0
+
+        # System signals
+        self._training_time_s: float = 0.0  # Duration of last training cycle
+        self._campaign_start_time: float = time.time()
+        self._total_training_time_s: float = 0.0  # Cumulative training time
+        self._total_sim_time_s: float = 0.0  # Cumulative sim wall time
+        self._sim_complete_times: list = []  # Timestamps of sim completions
+        self._last_model_update_time: float = time.time()  # For staleness
+
+        # Application signals
         self._recent_rmsds: list = []  # Rolling RMSD from simulations
+        self._recent_nn_fractions: list = []  # Rolling near-native fractions
         self._last_inference_dirs: set = set()  # For inference stability
         self._inference_stability: float = 0.0  # 0-1, fraction unchanged
+        self._total_sim_frames: int = 0  # Total frames seen so far
+        self._prev_sim_count: int = 0  # For data novelty tracking
 
         # Dynamic provisioning components (all in thinker thread)
         self.signal_monitor = SignalMonitor(
@@ -236,14 +255,24 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         self.inference_input.append(output.contact_map_path, output.rmsd_path)
         num_sims = len(self.train_input)
 
-        # Track RMSD for composite signal
+        # Track simulation-level signals
         try:
             rmsd_data = np.load(output.rmsd_path)
             mean_rmsd = float(np.mean(rmsd_data))
+            nn_frac = float(np.mean(rmsd_data < 5.0))
+
             self._recent_rmsds.append(mean_rmsd)
-            # Keep only last 50
+            self._recent_nn_fractions.append(nn_frac)
+            self._total_sim_frames += len(rmsd_data)
+            self._sim_complete_times.append(time.time())
+
+            # Keep rolling windows at 50
             if len(self._recent_rmsds) > 50:
                 self._recent_rmsds = self._recent_rmsds[-50:]
+            if len(self._recent_nn_fractions) > 50:
+                self._recent_nn_fractions = self._recent_nn_fractions[-50:]
+            if len(self._sim_complete_times) > 100:
+                self._sim_complete_times = self._sim_complete_times[-100:]
         except Exception:
             pass
 
@@ -260,24 +289,84 @@ class DeepDriveMD_Dynamic(DeepDriveMDWorkflow):
         self.model_weights_available = True
         self.train_count += 1
 
+        # Update system-level tracking
+        now = time.time()
+        self._training_time_s = output.training_time_s
+        self._total_training_time_s += output.training_time_s
+        self._last_model_update_time = now
+
         self.logger.info(
             f"Training cycle {self.train_count} complete, "
             f"model_weight_path: {output.model_weight_path}"
         )
 
-        # Build composite telemetry vector: [normalized_loss, mean_rmsd, inference_stability]
+        # ── Compute ALL signals ──
+
+        # ML signals (normalized)
         raw_loss = output.final_loss
         if self._first_loss is None:
             self._first_loss = raw_loss if raw_loss > 0 else 1.0
         normalized_loss = raw_loss / self._first_loss
+        self._latest_train_loss = raw_loss
+        self._latest_valid_loss = output.final_valid_loss
+        self._latest_recon_loss = output.final_recon_loss
+        self._latest_kld_loss = output.final_kld_loss
 
+        # System signals
+        elapsed = now - self._campaign_start_time
+        staleness_ratio = self._total_training_time_s / elapsed if elapsed > 0 else 0.0
+        training_cost_factor = self._total_training_time_s / (elapsed * 8) if elapsed > 0 else 0.0  # fraction of 8-GPU budget
+
+        # Sim throughput (sims/min over last 60s)
+        recent_cutoff = now - 60.0
+        recent_sims = sum(1 for t in self._sim_complete_times if t > recent_cutoff)
+        sim_throughput = recent_sims  # sims in last 60s
+
+        # Application signals
         mean_rmsd = float(np.mean(self._recent_rmsds[-10:])) if self._recent_rmsds else 10.0
+        nn_fraction = float(np.mean(self._recent_nn_fractions[-10:])) if self._recent_nn_fractions else 0.0
 
-        metrics = np.array([normalized_loss, mean_rmsd, self._inference_stability])
+        # Data novelty: ratio of new sims since last training to total
+        new_sims = self.simulations_completed - self._prev_sim_count
+        data_novelty = new_sims / max(self.simulations_completed, 1)
+        self._prev_sim_count = self.simulations_completed
+
+        # ── Build telemetry vector ──
+        # Index mapping (for policy to reference):
+        #  0: normalized_loss     (ML)
+        #  1: valid_loss          (ML)
+        #  2: recon_loss          (ML)
+        #  3: kld_loss            (ML)
+        #  4: mean_rmsd           (Application)
+        #  5: nn_fraction         (Application)
+        #  6: data_novelty        (Application)
+        #  7: inference_stability (Application)
+        #  8: staleness_ratio     (System)
+        #  9: training_cost_factor(System)
+        # 10: sim_throughput      (System)
+        # 11: training_time_s     (System)
+        metrics = np.array([
+            normalized_loss,          # 0
+            output.final_valid_loss,  # 1
+            output.final_recon_loss,  # 2
+            output.final_kld_loss,    # 3
+            mean_rmsd,                # 4
+            nn_fraction,              # 5
+            data_novelty,             # 6
+            self._inference_stability,# 7
+            staleness_ratio,          # 8
+            training_cost_factor,     # 9
+            sim_throughput,           # 10
+            output.training_time_s,   # 11
+        ])
         state = self.signal_monitor.submit_telemetry(metrics)
         self.logger.info(
             f"Signal Monitor: norm_loss={normalized_loss:.4f}, "
-            f"rmsd={mean_rmsd:.3f}, inf_stab={self._inference_stability:.3f}, "
+            f"valid_loss={output.final_valid_loss:.1f}, "
+            f"rmsd={mean_rmsd:.3f}, nn={nn_fraction:.3f}, "
+            f"novelty={data_novelty:.3f}, inf_stab={self._inference_stability:.3f}, "
+            f"staleness={staleness_ratio:.3f}, cost={training_cost_factor:.3f}, "
+            f"throughput={sim_throughput}, train_time={output.training_time_s:.1f}s, "
             f"state={state.name}, window={self.signal_monitor.get_stats()['window_size']}"
         )
 

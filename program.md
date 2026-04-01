@@ -238,14 +238,35 @@ c3d4e5f	kras	8.200	7.100	15.0	22.0	12	5	30	45	improved	composite; FREEZE@5 trigg
 
 ## The experiment loop
 
+### Phase 1: Instrument all signals
+
+Before tuning any policy, **implement tracking for every signal listed
+above that is marked "NOT tracked" or "NOT used."** The policy cannot
+make good decisions with incomplete information. For each signal:
+
+1. Add the tracking code to the appropriate handler in `openmm_cvae_dynamic.py`
+   (e.g., compute staleness ratio in `handle_train_output`, compute data
+   novelty in `handle_simulation_output`, etc.)
+2. Log the signal value so it appears in the runtime log
+3. Include it in the telemetry vector passed to the signal monitor
+4. Run a quick BBA test to verify nothing crashes
+5. Commit
+
+Do NOT try to tune thresholds or change freeze logic during this phase.
+The goal is to get all signals flowing and visible. Once you can see
+all the signals in the logs, you have the information to design good
+policies.
+
+### Phase 2: Experiment loop
+
+Once all signals are instrumented:
+
 LOOP FOREVER:
 
 1. **Read the state**: Check `results.tsv`, `git log`, current policy code,
-   and the available signals catalog above.
-2. **Form a hypothesis**: What change to the signals, policy logic, or
-   workflow could improve results? Look at which signals are available
-   but unused, where the current policy makes wrong decisions, and what
-   the data from previous runs tells you.
+   and the signal values from recent run logs.
+2. **Form a hypothesis**: Based on what the signal data tells you about
+   each system's behavior. Let the data guide you — don't guess.
 3. **Implement the change**: Edit policy.py and/or openmm_cvae_dynamic.py
    and/or the dynamic YAML configs.
 4. **git commit** with a descriptive message.
